@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from itertools import islice
 from datetime import datetime
+from huggingface_hub import login
+from huggingface_hub import HfApi
 
 
 def eval_model(model,val_loader,criterion,DEVICE,LOGGING,MAX_EVAL_STEP,val_loss_file,global_val_step):
@@ -33,10 +35,24 @@ def eval_model(model,val_loader,criterion,DEVICE,LOGGING,MAX_EVAL_STEP,val_loss_
         if i >= MAX_EVAL_STEP:
             break
     model.train()
-    return step_loss / count, count
+    return step_loss / count, count,global_val_step
+
+def push_to_hub(api, model_path):
+    print("Pushing to hub model")
+    api.upload_file(
+        path_or_fileobj=model_path,
+        path_in_repo=os.path.basename(model_path), 
+        repo_id="canbingol/qwen3-tr",
+        repo_type="model",
+    )
 
 
 def lm_pretrain(model,train_loader,val_loader,criterion,optimizer,EPOCH,MAX_TRAIN_STEP,MAX_EVAL_STEP,LOGGING,DEVICE,SAVE_STEP,OUTPUT_PATH,MODEL_INFO,cpt_epoch=0,cpt_step=0):
+
+    login(os.getenv("HF_TOKEN"))
+    token = os.getenv("HF_TOKEN")
+    api = HfApi(token=token)
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     log_file = os.path.join(OUTPUT_PATH, "logs", f"log_{timestamp}/log.txt")
@@ -57,7 +73,6 @@ def lm_pretrain(model,train_loader,val_loader,criterion,optimizer,EPOCH,MAX_TRAI
     if MODEL_INFO:
         model_info()
 
-    eval_maked_step = 0
     model.train()
     step = cpt_step
     global_val_step = 0
@@ -72,8 +87,6 @@ def lm_pretrain(model,train_loader,val_loader,criterion,optimizer,EPOCH,MAX_TRAI
         epoch_val_loss = 0
         train_steps_loss = 0
 
-
-        
         print(f"+--------------------------------- {epoch+1} EPOCH ------------------------------------+")
         bar = tqdm(islice(train_loader, start_in_epoch,MAX_TRAIN_STEP), total=MAX_TRAIN_STEP,initial=start_in_epoch,
             desc=f"Epoch {epoch+1}/{EPOCH}", unit="batch")
@@ -113,7 +126,7 @@ def lm_pretrain(model,train_loader,val_loader,criterion,optimizer,EPOCH,MAX_TRAI
                     "loss": loss.item(),
                 }, save_path)
                 print(f"[INFO] Model saved at {save_path}")
-
+                push_to_hub(api,save_path)
             bar.set_postfix(train_loss=loss.item())
             if (current_step % MAX_EVAL_STEP == 0 or current_step == MAX_TRAIN_STEP) and step != 0:
 
@@ -141,7 +154,7 @@ def lm_pretrain(model,train_loader,val_loader,criterion,optimizer,EPOCH,MAX_TRAI
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": (epoch_train_loss / max(1, batch_count)),  
         }, save_path)
-
+        push_to_hub(api,save_path)
         print("\n================ EPOCH SUMMARY ================")
         print("Epoch        ||   Train Loss       ||   Val Loss   ||   Duration   ||   Save Path")
         print("---------------------------------------------------------------")
