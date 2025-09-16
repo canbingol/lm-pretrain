@@ -1,5 +1,6 @@
 import os, gc
 import argparse
+from dataclasses import dataclass
 
 import torch
 import sentencepiece as spm
@@ -7,14 +8,40 @@ import sentencepiece as spm
 from data_loader import prepare_tokenizer_data
 from train_tokenizer import TrainTokenizer
 
+from dataclasses import dataclass
+from typing import Optional
+import torch
+from torch.utils.data import DataLoader
+
+@dataclass(frozen=True)
+class TrainConfig:
+    num_epochs: int
+    training_steps: int
+    eval_steps: int
+    eval_sample: int
+    learning_rate: float
+    device: torch.device
+    output_path: str
+    force: bool = False
+
+@dataclass(frozen=True)
+class DataLoaders:
+    train: DataLoader
+    val: DataLoader
+
+@dataclass
+class TrainState:
+    model: torch.nn.Module
+    optimizer: torch.optim.Optimizer
+    scheduler: torch.optim.lr_scheduler.LRScheduler
+    checkpoint_path: str
+
 def load_model(model,inference,checkpoint_path, device,optimizer=None,scheduler=None):
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path,map_location=device)
     if inference:
         return model.to(device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
-    epoch       = checkpoint["epoch"]
-    global_step = checkpoint["step"]
     train_loss  = checkpoint["train_loss"]
     val_loss    = checkpoint["val_loss"]
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])

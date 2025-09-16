@@ -10,7 +10,10 @@ from pre_train import trainer
 from utils import (
     get_tokenizer, 
     load_model, model_size_info,
-    build_argparser
+    build_argparser,
+    TrainState,
+    TrainConfig,
+    DataLoaders
 )
 from warnings import filterwarnings
 filterwarnings("ignore")
@@ -65,13 +68,30 @@ def main():
         exit()
 
     train_loader, val_loader = prepare_train_data(args.hf_data,tokenizer,OUTPUT_PATH, batch_size=config.batch_size,context_len=config.max_seq_len)
+    
+    data_loaders = DataLoaders(
+        train=train_loader,
+        val=val_loader
+    )
+    
+    train_state = TrainState(
+        model=model,
+        checkpoint_path=checkpoint_path,
+        optimizer=None,
+        scheduler=None
 
-    if TRAINING_STEPS is not None:
-        TRAINING_STEPS = min(len(train_loader),TRAINING_STEPS)
-    else:
-        TRAINING_STEPS = len(train_loader)
-        
-    trainer(model,train_loader,val_loader,EPOCH,TRAINING_STEPS,EVAL_STEPS,EVAL_SAMPLE,LR,DEVICE,OUTPUT_PATH,checkpoint_path,FORCE)
+    )
+    train_config = TrainConfig(
+        num_epochs=EPOCH,
+        training_steps=TRAINING_STEPS,
+        eval_steps=EVAL_STEPS,
+        eval_sample=EVAL_SAMPLE,
+        learning_rate=LR,
+        device=DEVICE,
+        output_path=OUTPUT_PATH,
+        force=FORCE,
+    )
+    trainer(train_state,data_loaders,train_config)
 if __name__ == "__main__":
 
     main()
