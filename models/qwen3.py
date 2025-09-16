@@ -9,12 +9,12 @@ import numpy as np
 class Qwen3Config:
     # Model architecture
     config_name = "QwenConfig"
-    embed_dim: int = 256
+    embed_dim: int = 512
     n_heads: int = 128
-    n_layers: int = 10
+    n_layers: int = 20
     d_ff: int = 512
     batch_size: int = 29
-    max_steps: int = 2000
+    max_steps: int = 200_000
 
     # Qwen3-like parameters
     n_kv_heads: int = 64 # For Grouped-Query Attention
@@ -28,9 +28,9 @@ class Qwen3Config:
     muon_lr: float = 0.01
 
     # Data parameters
-    max_seq_len: int = 128
-    max_tokens: int = 500000
-    vocab_size = 10_000
+    max_seq_len: int = 512
+    max_tokens: int = 50000000
+    vocab_size = 32768
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Evaluation

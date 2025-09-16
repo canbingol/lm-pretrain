@@ -112,7 +112,7 @@ def main():
         print(f"Model Response :\n{response}")
         exit()
 
-    train_loader, val_loader = prepare_train_data(args.hf_data,tokenizer, context_len=config.max_seq_len)
+    train_loader, val_loader = prepare_train_data(args.hf_data,tokenizer,OUTPUT_PATH, batch_size=config.batch_size,context_len=config.max_seq_len)
 
     if MAX_TRAIN_STEP is not None:
         MAX_TRAIN_STEP = min(len(train_loader),MAX_TRAIN_STEP)
