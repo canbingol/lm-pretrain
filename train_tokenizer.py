@@ -2,13 +2,13 @@ import os
 import sentencepiece as spm
 
 class TrainTokenizer:
-    def __init__(self, Modelcfg, data_path,OUTPUT_PATH):
+    def __init__(self, vocab_size, data_path,OUTPUT_PATH):
         model_prefix = f"{OUTPUT_PATH}/{OUTPUT_PATH}.tokenizer"
         spm.SentencePieceTrainer.train(
             input=data_path,
             model_prefix=model_prefix,
-            vocab_size=Modelcfg.vocab_size, 
-            model_type="bpe",
+            vocab_size=vocab_size, 
+            model_type="bpe",   
             character_coverage=1.0,
             pad_id=0,
             unk_id=1, 

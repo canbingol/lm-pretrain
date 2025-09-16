@@ -5,8 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset,get_dataset_config_info
 from tqdm import tqdm
 
-def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len=512,len_data_row=1_500_000,val_ratio=0.06):
-    WRITE_TO_FILE = True
+def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len=512,len_data_row=4_000,val_ratio=0.06):
     sample_file = f"{output_path}/sample.txt"
     dataset = load_dataset(hf_data_name, split="train", streaming=True)
     print("tokenizing...")
@@ -28,7 +27,6 @@ def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len
         else:
             train_tokens.extend(buf)
         buf.clear()
-
     print(f"{total_tokens} token tokenized")
     class TextDataset(Dataset):
         def __init__(self, tokens, max_length=512, stride=512):
@@ -47,8 +45,7 @@ def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len
 
     train_dataset = TextDataset(train_tokens, max_length=context_len, stride=context_len)
     val_dataset   = TextDataset(val_tokens,   max_length=context_len, stride=context_len)
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False,
                             num_workers=2, pin_memory=True)
     val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False,
                             num_workers=2, pin_memory=True)
@@ -69,11 +66,9 @@ def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len
             f.write(f"Input Text:  {inp_text}\n")
             f.write(f"Target Text: {tgt_text}\n\n")
 
-
     del dataset
     gc.collect()
     return train_loader,val_loader
-
 
 def prepare_tokenizer_data(hf_data_name,text_column_name,output_path,len_data_row=1_500_000):
     filename = os.path.basename(hf_data_name)

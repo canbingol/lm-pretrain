@@ -28,7 +28,7 @@ class Qwen3Config:
     muon_lr: float = 0.01
 
     # Data parameters
-    max_seq_len: int = 512
+    max_seq_len: int = 128
     max_tokens: int = 50000000
     vocab_size = 32768
     
@@ -211,7 +211,7 @@ class Qwen3(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-
+        self.name = "qwen3"
         self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
         self.position_dropout = nn.Dropout(config.dropout)
 
