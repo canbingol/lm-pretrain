@@ -1,183 +1,139 @@
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import torch
-import torch.nn.functional as F
-from tqdm import tqdm
+import time
 from itertools import islice
-from datetime import datetime
-from huggingface_hub import login
-from huggingface_hub import HfApi
 
+import torch
+from torch.optim.lr_scheduler import LinearLR, SequentialLR, CosineAnnealingLR
+import tqdm
 
-def eval_model(model,val_loader,criterion,DEVICE,LOGGING,MAX_EVAL_STEP,val_loss_file,global_val_step):
-    model.eval()
-    step_loss = 0
-    count = 0
-    for i,(input_batch,target_batch) in enumerate(val_loader):
-        if LOGGING:
-            print(f"{i}th eval step progrss...")
+from utils import clear_gpu_memory, load_model
 
-        input_batch = input_batch.to(DEVICE)
-        target_batch = target_batch.to(DEVICE)
-        with torch.no_grad():
-            logits = model(input_batch)
-            logits = logits.to(DEVICE)
-        
+def calcc(model,input_batch,target_batch,device):
+    total_loss = 0
+    for i in range(len(input_batch)):
+        input = input_batch.to(device, non_blocking=True)
+        logits = model(input)
+        del input
+        target = target_batch.to(device, non_blocking=True)
+
         logits = logits.reshape(logits.shape[0] * logits.shape[1],-1)
-        target_batch = target_batch.reshape(target_batch.shape[0] * target_batch.shape[1])
+        target = target.reshape(target.shape[0] * target.shape[1])
 
-        loss = criterion(logits,target_batch,ignore_index=0)
-        with open (val_loss_file,"a") as f:
-            f.write(f"{global_val_step+1} step validation loss : {loss.item()}\n")
-        step_loss += loss.item()
-        count += 1
-        if i >= MAX_EVAL_STEP:
+        loss = torch.nn.functional.cross_entropy(logits,target)
+        total_loss += loss
+        del target,logits,loss
+    
+    clear_gpu_memory()
+    return total_loss / len(input_batch)
+
+
+def calcc_loss_batch(model, input_batch, target_batch, device):
+    loss = calcc(model,input_batch,target_batch,device)
+    return loss
+
+
+def calc_loader_loss(model, data_loader, device, num_batch=None):
+    total_loss = 0
+
+    if len(data_loader) == 0:
+        return float("nan")  
+    elif num_batch is None:
+        num_batch = len(data_loader)
+    else:
+        num_batch = min(num_batch, len(data_loader))
+
+    for i, (input_batch, target_batch) in enumerate(data_loader):
+        if i < num_batch:
+            loss = calcc_loss_batch(model,input_batch,target_batch,device)
+            total_loss += loss.item()
+            del loss
+        
+        else:
             break
+        
+        clear_gpu_memory()
+        return total_loss / num_batch
+    
+def evaluate_model(model,train_loader, val_loader,device, eval_iter):
+    model.eval()
+    with torch.no_grad():
+        train_loss = calc_loader_loss(model,train_loader,device,num_batch=eval_iter)
+        val_loss = calc_loader_loss(model,val_loader,device,num_batch=eval_iter)
     model.train()
-    return step_loss / count, count,global_val_step
-
-def push_to_hub(api, model_path):
-    print("Pushing to hub model")
-    api.upload_file(
-        path_or_fileobj=model_path,
-        path_in_repo=os.path.basename(model_path), 
-        repo_id="canbingol/qwen3-tr",
-        repo_type="model",
-    )
+    return train_loss, val_loss
 
 
-def lm_pretrain(model,train_loader,val_loader,criterion,optimizer,EPOCH,MAX_TRAIN_STEP,MAX_EVAL_STEP,LOGGING,DEVICE,SAVE_STEP,OUTPUT_PATH,MODEL_INFO,cpt_epoch=0,cpt_step=0):
+def train_model(model,optimizer,scheduler,train_loader,val_loader,num_epochs,device,eval_steps,training_steps,eval_sample,output_path):
 
-    login(os.getenv("HF_TOKEN"))
-    token = os.getenv("HF_TOKEN")
-    api = HfApi(token=token)
+    train_losses, val_losses, track_tokens_seen = [],[],[]
+    token_seen , global_step = 0, -1
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    best_val_loss = float("inf")
 
-    log_file = os.path.join(OUTPUT_PATH, "logs", f"log_{timestamp}/log.txt")
-    val_loss_file = os.path.join(OUTPUT_PATH, "logs", f"log_{timestamp}/val_loss.txt")
-    train_loss_file = os.path.join(OUTPUT_PATH, "logs", f"log_{timestamp}/train_loss.txt")
+    for epoch in range(num_epochs):
+        model.train()
 
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    def model_info():
-        num_params = sum(p.numel() for p in model.parameters())
-        param_size_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+        for input_batch, target_batch in tqdm.tqdm(islice(train_loader,0,training_steps), total=training_steps):
 
-        size_mb = param_size_bytes / (1024**2)
-        size_gb = param_size_bytes / (1024**3)
-
-        print(f"Toplam Parametre Sayısı: {num_params:,}")
-        print(f"Yaklaşık Boyut: {size_mb:.2f} MB ({size_gb:.2f} GB)")
-
-    if MODEL_INFO:
-        model_info()
-
-    model.train()
-    step = cpt_step
-    global_val_step = 0
-    FIRST = True
-
-    for epoch in range(cpt_epoch,EPOCH):
-        start_time = datetime.now()
-        start_in_epoch = (step % MAX_TRAIN_STEP)    
-        batch_count = 0 
-        val_batch_count = 0
-        epoch_train_loss = 0
-        epoch_val_loss = 0
-        train_steps_loss = 0
-
-        print(f"+--------------------------------- {epoch+1} EPOCH ------------------------------------+")
-        bar = tqdm(islice(train_loader, start_in_epoch,MAX_TRAIN_STEP), total=MAX_TRAIN_STEP,initial=start_in_epoch,
-            desc=f"Epoch {epoch+1}/{EPOCH}", unit="batch")
-        for i,(input_batch, output_batch) in enumerate(bar):
-            current_step = step + 1
-            batch_count += 1    
-            if LOGGING:
-                print(f"{epoch}th epoch {i}th training step progrss...")
-            input_batch = input_batch.to(DEVICE,non_blocking=True)
-            output_batch = output_batch.to(DEVICE,non_blocking=True)
-
-            logits = model(input_batch)
-            logits = logits.to(DEVICE)
-            
-            optimizer.zero_grad()
-            logits = logits.reshape(logits.shape[0] * logits.shape[1], -1)
-            output_batch = output_batch.reshape(output_batch.shape[0] * output_batch.shape[1])
-
-            if LOGGING:
-                print(f"training logits shape {logits.shape}\n training target shape {output_batch.shape}")
-
-            loss = F.cross_entropy(logits, output_batch, ignore_index=0)
-            with open (train_loss_file,"a") as f:
-                f.write(f"{step+1} step train loss : {loss.item()}\n")
-            epoch_train_loss += loss.item()
-            train_steps_loss += loss.item()
+            loss = calcc_loss_batch(model,input_batch,target_batch,device)
             loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
+            scheduler.step()
+            token_seen = input_batch.numel()
+            global_step += 1
+
+
+            if global_step % eval_steps == 0:
+                train_loss, val_loss = evaluate_model(
+                    model,train_loader,val_loader,device,eval_sample
+                )
+
+                train_losses.append(train_loss)
+                val_losses.append(val_loss)
+                track_tokens_seen.append(token_seen)
+                print(f"Ep {epoch+1} (Step {global_step:06d}): "
+                      f"Train loss {train_loss:.3f}, Val loss {val_loss:.3f}")
             
-            if current_step % SAVE_STEP == 0 and step != 0:
-                save_path = os.path.join(OUTPUT_PATH, f"checkpoint_epoch{epoch+1}_step{step}.pt")
-                torch.save({
-                    "epoch": epoch,
-                    "step": step,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "loss": loss.item(),
-                }, save_path)
-                print(f"[INFO] Model saved at {save_path}")
-                push_to_hub(api,save_path)
-            bar.set_postfix(train_loss=loss.item())
-            if (current_step % MAX_EVAL_STEP == 0 or current_step == MAX_TRAIN_STEP) and step != 0:
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    torch.save({
+                "epoch": epoch,
+                "step":global_step,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "train_loss": train_loss,  
+                "val_loss": val_loss
+            },f"{output_path}/{model.name}_best_model.pt")
+        clear_gpu_memory()
+    return train_losses, val_losses, track_tokens_seen
 
-                eval_loss,count,global_val_step = eval_model(model,val_loader,criterion,DEVICE,LOGGING,MAX_EVAL_STEP,val_loss_file,global_val_step)
-                if FIRST :
-                    epoch_val_loss += eval_loss
-                    FIRST = False
-                else:
-                    epoch_val_loss += eval_loss
-                    epoch_val_loss /= 2
-                val_batch_count += count
-                print(f"{step}.th step | train-loss: {train_steps_loss:.5f} | eval-loss: {epoch_val_loss:.5f}")
-                train_steps_loss = 0.0    
-            step += 1
-        step = current_step
-        end_time = datetime.now()
-        duration = end_time - start_time
-        hours, remainder = divmod(duration.total_seconds(), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        duration_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
-        save_path = os.path.join(OUTPUT_PATH, f"checkpoint_epoch{epoch+1}_final.pt")
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "loss": (epoch_train_loss / max(1, batch_count)),  
-        }, save_path)
-        push_to_hub(api,save_path)
-        print("\n================ EPOCH SUMMARY ================")
-        print("Epoch        ||   Train Loss       ||   Val Loss   ||   Duration   ||   Save Path")
-        print("---------------------------------------------------------------")
-        print(f"{epoch+1:<5} || {epoch_train_loss / max(1, batch_count):<13.6f}   || {epoch_val_loss :<11.6f}   || {duration_str:<12}|| {save_path}")
-        print("================================================\n")
 
-        hours, remainder = divmod(duration.total_seconds(), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        duration_str = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+def trainer(model,train_loader,val_loader,num_epochs,training_steps,eval_steps,eval_sample,learning_rate,device,output_path,checkpoint_path,force):
+    warmup_steps = 100    
+    min_lr = 3e-5           
 
-        row = f"{epoch+1:<5} || {epoch_train_loss / max(1, batch_count):<13.6f}   || {epoch_val_loss:<11.6f}     || {duration_str:<12}|| {save_path}\n"
 
-        if not os.path.exists(log_file):
-            with open(log_file, "w") as f:
-                f.write("Epoch ||   Train Loss      ||   Val Loss   ||   Duration   ||   Save Path\n")
-                f.write("---------------------------------------------------------------\n")
+    torch.manual_seed(42)
 
-        with open(log_file, "a") as f:
-            f.write(row)
+    print(f"Using {device}")
 
-        if epoch+1 == EPOCH:  
-            with open(log_file, "r") as f:
-                print("\n================ TRAINING LOG ================\n")
-                print(f.read())
-                print("=============================================\n")
+    optimizer = torch.optim.AdamW(model.parameters(),learning_rate, weight_decay=0.1)
+    scheduler_warmup = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_steps)
+    scheduler_decay = CosineAnnealingLR(optimizer, T_max=training_steps - warmup_steps, eta_min=min_lr)
+    scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_decay], milestones=[warmup_steps])
+    
+    if checkpoint_path and not force:
+        model,optimizer,scheduler = load_model(model,False,checkpoint_path,
+                                               device,optimizer,scheduler)
+        start_time = time.time()
 
+    train_losses, val_losses, tokens_seen = train_model(
+        model,optimizer,scheduler, train_loader, val_loader,
+        num_epochs, device,eval_steps, training_steps,eval_sample,output_path
+    )
+
+    end_time = time.time()
+    execution_time_minutes = (end_time - start_time) / 60
+    print(f"Training completed in {execution_time_minutes:.2f} minutes.") 
+    return train_losses,val_losses,tokens_seen
