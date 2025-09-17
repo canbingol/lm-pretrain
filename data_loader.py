@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 from tqdm import tqdm
 
-def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len=512,len_data_row=4_000,val_ratio=0.06):
+def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len=512,len_data_row=1_000,val_ratio=0.06):
     sample_file = f"{output_path}/sample.txt"
     dataset = load_dataset(hf_data_name, split="train", streaming=True)
     print("tokenizing...")
@@ -18,7 +18,6 @@ def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len
         text = (ex.get("text") or "").strip()
         if not text:
             continue
-        text = text.lower()
         ids = tokenizer.encode(text)
         buf.extend(ids)
         total_tokens += len(ids)
@@ -29,12 +28,14 @@ def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len
         buf.clear()
     print(f"{total_tokens} token tokenized")
     class TextDataset(Dataset):
-        def __init__(self, tokens, max_length=512, stride=512,eos_token=3,bos_token=2):
+        def __init__(self, tokens, max_length=512, stride=512, bos_token=2):
             self.input_ids, self.target_ids = [], []
-            for i in tqdm(range(0, len(tokens) - max_length, stride), desc="building chunks"):
-                tokens = [bos_token] + tokens
-                inp = tokens[i:i + max_length]
-                tgt = tokens[i + 1:i + max_length] + [eos_token]
+
+            for i in tqdm(range(0, len(tokens) - (max_length - 1), stride), desc="building chunks"):
+                chunk = tokens[i:i + max_length - 1]
+                inp = [bos_token] + chunk
+                tgt = chunk + [tokens[i + max_length - 1]]
+
                 self.input_ids.append(torch.tensor(inp))
                 self.target_ids.append(torch.tensor(tgt))
 
@@ -44,9 +45,10 @@ def prepare_train_data(hf_data_name,tokenizer,output_path,batch_size,context_len
         def __getitem__(self, idx):
             return self.input_ids[idx], self.target_ids[idx]
 
+
     train_dataset = TextDataset(train_tokens, max_length=context_len, stride=context_len)
     val_dataset   = TextDataset(val_tokens,   max_length=context_len, stride=context_len)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False,
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
                             num_workers=0, pin_memory=True)
     val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False,
                             num_workers=0, pin_memory=True)
