@@ -387,7 +387,7 @@ class Gemma2(nn.Module):
             head_dim=self.config.hidden_size // self.config.num_attention_heads,
             device=self.config.device
         )
-        self.nn.Linear = nn.Linear(config.hidden_size, config.vocab_size)
+        self.Linear = nn.Linear(config.hidden_size, config.vocab_size)
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -404,5 +404,5 @@ class Gemma2(nn.Module):
                 start_pos=start_pos
             )
         hidden_states = self.norm(hidden_states)
-        out = self.nn.Linear(hidden_states)
+        out = self.Linear(hidden_states)
         return out
