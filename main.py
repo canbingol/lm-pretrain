@@ -3,7 +3,11 @@ import os
 import torch
 import torch.nn.functional as F
 
+from models.deepseekV2 import Deepseek, DeepseekConfig
 from models.qwen3 import Qwen3,Qwen3Config
+from models.gemma2 import Gemma2, GemmaConfig
+from models.llama2 import LLaMA2, LlamaConfig
+
 from inference import generate
 from data_loader import prepare_train_data
 from pre_train import trainer
@@ -22,6 +26,10 @@ def main():
     args = parser.parse_args()
     model_map = {
         "qwen3": (Qwen3Config, Qwen3),
+        "deepseek":(DeepseekConfig, Deepseek),
+        "gemma":(GemmaConfig,Gemma2),
+        "llama2":(LlamaConfig,LLaMA2)
+
     }
     ConfigClass, ModelClass = model_map[args.model]
     config = ConfigClass()
@@ -43,9 +51,9 @@ def main():
     FORCE = args.force
 
     if FORCE:
-        OUTPUT_PATH = f"{args.model}_force"
+        OUTPUT_PATH = f"output/{args.model}_force"
     else:
-        OUTPUT_PATH = f"{args.model}"
+        OUTPUT_PATH = f"output/{args.model}"
 
     os.makedirs(OUTPUT_PATH, exist_ok=True)
     
@@ -67,7 +75,7 @@ def main():
         print(f"Model Response :\n{response}")
         exit()
 
-    train_loader, val_loader = prepare_train_data(args.hf_data,tokenizer,OUTPUT_PATH, batch_size=config.batch_size,context_len=config.max_seq_len)
+    train_loader, val_loader = prepare_train_data(args.hf_data,tokenizer,OUTPUT_PATH, batch_size=config.batch_size,context_len=config.max_position_embeddings)
     
     data_loaders = DataLoaders(
         train=train_loader,
@@ -77,8 +85,6 @@ def main():
     train_state = TrainState(
         model=model,
         checkpoint_path=checkpoint_path,
-        optimizer=None,
-        scheduler=None
 
     )
     train_config = TrainConfig(
@@ -91,6 +97,7 @@ def main():
         output_path=OUTPUT_PATH,
         force=FORCE,
     )
+
     trainer(train_state,data_loaders,train_config)
 if __name__ == "__main__":
 
