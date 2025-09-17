@@ -3,7 +3,7 @@ import sentencepiece as spm
 
 class TrainTokenizer:
     def __init__(self, vocab_size, data_path,OUTPUT_PATH):
-        model_prefix = f"{OUTPUT_PATH}/{OUTPUT_PATH}.tokenizer"
+        model_prefix = f"{OUTPUT_PATH}/{os.path.basename(OUTPUT_PATH)}.tokenizer"
         spm.SentencePieceTrainer.train(
             input=data_path,
             model_prefix=model_prefix,
