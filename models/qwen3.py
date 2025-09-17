@@ -9,63 +9,49 @@ import numpy as np
 class Qwen3Config:
     # Model architecture
     config_name = "QwenConfig"
-    embed_dim: int = 512
-    n_heads: int = 128
-    n_layers: int = 20
-    d_ff: int = 512
+    hidden_size: int = 512
+    num_attention_heads: int = 128
+    num_hidden_layers: int = 20
+    intermediate_size: int = 1024
     batch_size: int = 29
-    max_steps: int = 200_000
 
     # Qwen3-like parameters
-    n_kv_heads: int = 64 # For Grouped-Query Attention
-    sliding_window: int = 1024  # Set a large default, effectively disabling it unless specified
+    num_key_value_heads: int = 64 # For Grouped-Query Attention
+    sliding_window: int = None  # Set a large default, effectively disabling it unless specified
     attention_bias: bool = False  # Qwen3 often sets this to False
     rms_norm_eps: float = 1e-06  # Epsilon for RMSNorm
     qk_norm = True
 
-    # Training parameters
-    gradient_accumulation_steps: int = 4
-    muon_lr: float = 0.01
-
     # Data parameters
-    max_seq_len: int = 128
-    max_tokens: int = 50000000
+    max_position_embeddings: int = 128
     vocab_size = 32768
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # Evaluation
-    eval_every: int = 500
-    eval_steps: int = 100
-
     # Regularization
-    weight_decay: float = 0.1
     dropout: float = 0.0
-    grad_clip: float = 1.0
 
-
-    data_dtype = np.uint16
     # Technical
-    use_amp: bool = True
     drop_last = True
     shuffle = False
     def __post_init__(self):
-        self.d_k = self.embed_dim // self.n_heads
-        assert self.embed_dim % self.n_heads == 0, "embed_dim must be divisible by n_heads"
-        assert self.n_heads % self.n_kv_heads == 0, "n_heads must be divisible by n_kv_heads"
-        self.n_kv_groups = self.n_heads // self.n_kv_heads
+        self.head_dim = self.hidden_size // self.num_attention_heads
+        assert self.hidden_size % self.num_attention_heads == 0, "hidden_size must be divisible by num_attention_heads"
+        assert self.num_attention_heads % self.num_key_value_heads == 0, "num_attention_heads must be divisible by num_key_value_heads"
+        self.n_kv_groups = self.num_attention_heads // self.num_key_value_heads
 
 
 class SwiGLUFeedForward(nn.Module):
-    def __init__(self, embed_dim: int, d_ff: int, dropout: float = 0.1):
+    def __init__(self, hidden_size: int, intermediate_size: int, dropout: float = 0.1):
         super().__init__()
-        self.gate_proj = nn.Linear(embed_dim, d_ff, bias=False)
-        self.down_proj = nn.Linear(d_ff, embed_dim, bias=False)
-        self.up_proj = nn.Linear(embed_dim, d_ff, bias=False)
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         activated_x = F.silu(self.gate_proj(x)) * self.up_proj(x)
         return self.down_proj(self.dropout(activated_x))
+    
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
 
@@ -83,22 +69,22 @@ class Rotary(nn.Module):
     - apply_rope: applies RoPE transformation to the input tensor
     """
 
-    def __init__(self, head_dim: int, max_seq_len: int, base: float = 10000.0):
+    def __init__(self, head_dim: int, max_position_embeddings: int, base: float = 10000.0):
         super().__init__()
         assert head_dim % 2 == 0, "head_dim must be even"
         self.head_dim = head_dim
-        self.max_seq_len = max_seq_len
+        self.max_position_embeddings = max_position_embeddings
         self.base = base
 
-        cos, sin = self.precompute_cis(head_dim, max_seq_len, base)
+        cos, sin = self.precompute_cis(head_dim, max_position_embeddings, base)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
 
-    def precompute_cis(self, head_dim: int, max_seq_len: int, base: float):
+    def precompute_cis(self, head_dim: int, max_position_embeddings: int, base: float):
         """cos/sin tablolarını hesapla"""
         half = head_dim // 2
         inv_freq = 1.0 / (base ** (torch.arange(0, half, dtype=torch.float32) / half))
-        t = torch.arange(max_seq_len, dtype=torch.float32)
+        t = torch.arange(max_position_embeddings, dtype=torch.float32)
         freqs = torch.outer(t, inv_freq)  # (S, half)
         return freqs.cos(), freqs.sin()
 
@@ -128,24 +114,24 @@ class Rotary(nn.Module):
 class GroupedQueryAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.embed_dim = config.embed_dim
-        self.n_heads = config.n_heads
-        self.n_kv_heads = config.n_kv_heads
+        self.hidden_size = config.hidden_size
+        self.num_attention_heads = config.num_attention_heads
+        self.num_key_value_heads = config.num_key_value_heads
         self.n_kv_groups = config.n_kv_groups
-        self.d_k = config.d_k
+        self.head_dim = config.head_dim
         self.qk_norm = config.qk_norm
 
         # Separate linear layers for Q, K, V
-        self.q_proj = nn.Linear(self.embed_dim, self.n_heads * self.d_k, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.embed_dim, self.n_kv_heads * self.d_k, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.embed_dim, self.n_kv_heads * self.d_k, bias=config.attention_bias)
-        self.w_o = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
+        self.q_proj = nn.Linear(self.hidden_size, self.num_attention_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
 
         # QK-Normalization layers
-        self.q_norm = nn.RMSNorm(self.d_k, eps=config.rms_norm_eps)
-        self.k_norm = nn.RMSNorm(self.d_k, eps=config.rms_norm_eps)
+        self.q_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+        self.k_norm = nn.RMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
-        self.rotary = Rotary(self.d_k, config.max_seq_len)
+        self.rotary = Rotary(self.head_dim, config.max_position_embeddings)
         self.dropout = config.dropout
 
     def forward(self, x):
@@ -157,9 +143,9 @@ class GroupedQueryAttention(nn.Module):
         v = self.v_proj(x)
 
         # 2. Reshape into heads
-        q = q.view(batch_size, seq_len, self.n_heads, self.d_k)
-        k = k.view(batch_size, seq_len, self.n_kv_heads, self.d_k)
-        v = v.view(batch_size, seq_len, self.n_kv_heads, self.d_k)
+        q = q.view(batch_size, seq_len, self.num_attention_heads, self.head_dim)
+        k = k.view(batch_size, seq_len, self.num_key_value_heads, self.head_dim)
+        v = v.view(batch_size, seq_len, self.num_key_value_heads, self.head_dim)
 
         if self.qk_norm:
             # 3. Apply QK-Norm
@@ -168,11 +154,11 @@ class GroupedQueryAttention(nn.Module):
 
 
         # 4. Apply RoPE
-        # Transpose to (batch, seq_len, n_heads, d_k) -> (batch, n_heads, seq_len, d_k) for rotary
+        # Transpose to (batch, seq_len, num_attention_heads, head_dim) -> (batch, num_attention_heads, seq_len, head_dim) for rotary
         q = self.rotary(q.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
         k = self.rotary(k.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
 
-        # Transpose for attention: (batch, seq_len, n_heads, d_k) -> (batch, n_heads, seq_len, d_k)
+        # Transpose for attention: (batch, seq_len, num_attention_heads, head_dim) -> (batch, num_attention_heads, seq_len, head_dim)
         Q = q.transpose(1, 2)
         K = k.transpose(1, 2)
         V = v.transpose(1, 2)
@@ -187,22 +173,22 @@ class GroupedQueryAttention(nn.Module):
         )
 
         # 7. Reshape and final projection
-        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
-        return self.w_o(attn_output)
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
+        return self.o_proj(attn_output)
     
 class Qwen3Decoder(nn.Module):
     def __init__(self, config):  # Pass the entire config object
         super().__init__()
-        self.attention = GroupedQueryAttention(config)
-        self.feed_forward = SwiGLUFeedForward(config.embed_dim, config.d_ff, config.dropout)
-        self.norm1 = nn.RMSNorm(config.embed_dim, eps=config.rms_norm_eps)
-        self.norm2 = nn.RMSNorm(config.embed_dim, eps=config.rms_norm_eps)
+        self.self_attn = GroupedQueryAttention(config)
+        self.mlp = SwiGLUFeedForward(config.hidden_size, config.intermediate_size, config.dropout)
+        self.norm1 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm2 = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        attn_out = self.attention(self.norm1(x))
+        attn_out = self.self_attn(self.norm1(x))
         x = x + self.dropout(attn_out)
-        ff_out = self.feed_forward(self.norm2(x))
+        ff_out = self.mlp(self.norm2(x))
         x = x + self.dropout(ff_out)
         return x
 
@@ -212,18 +198,18 @@ class Qwen3(nn.Module):
         super().__init__()
         self.config = config
         self.name = "qwen3"
-        self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_dropout = nn.Dropout(config.dropout)
 
-        self.transformer_blocks = nn.ModuleList([
-            Qwen3Decoder(config) for _ in range(config.n_layers)
+        self.layers = nn.ModuleList([
+            Qwen3Decoder(config) for _ in range(config.num_hidden_layers)
         ])
 
-        self.norm = nn.RMSNorm(config.embed_dim, eps=config.rms_norm_eps)
+        self.norm = nn.RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.output_dropout = nn.Dropout(config.dropout)
 
-        self.lm_head = nn.Linear(config.embed_dim, config.vocab_size, bias=False)
-        self.lm_head.weight = self.token_embedding.weight
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head.weight = self.embed_tokens.weight
 
         self.apply(self._init_weights)
 
@@ -236,10 +222,10 @@ class Qwen3(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, x):
-        x = self.token_embedding(x) * math.sqrt(self.config.embed_dim)
+        x = self.embed_tokens(x) * math.sqrt(self.config.hidden_size)
         x = self.position_dropout(x)
 
-        for block in self.transformer_blocks:
+        for block in self.layers:
             x = block(x)
 
         x = self.norm(x)
