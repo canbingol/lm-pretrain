@@ -32,8 +32,6 @@ class DataLoaders:
 @dataclass
 class TrainState:
     model: torch.nn.Module
-    optimizer: torch.optim.Optimizer
-    scheduler: torch.optim.lr_scheduler.LRScheduler
     checkpoint_path: str
 
 def load_model(model,inference,checkpoint_path, device,optimizer=None,scheduler=None):
@@ -52,7 +50,7 @@ def load_model(model,inference,checkpoint_path, device,optimizer=None,scheduler=
 
 def get_tokenizer(hf_data,text_column_name,output_path,vocab_size,train_tokenizer):
     tokenizer_data_path = prepare_tokenizer_data(hf_data,text_column_name,output_path)
-    tokenizer_path = f"{output_path}/{output_path}.tokenizer.model"
+    tokenizer_path = f"{output_path}/{os.path.basename(output_path)}.tokenizer.model"
     if train_tokenizer or not os.path.exists(tokenizer_path):
         tokenizer_path = TrainTokenizer(vocab_size,tokenizer_data_path,output_path).get_model_path()
 
@@ -81,7 +79,7 @@ def clear_gpu_memory():
 def build_argparser():
     parser = argparse.ArgumentParser()
     # model choosing
-    parser.add_argument('--model', type=str, required=True, choices=["qwen3"],
+    parser.add_argument('--model', type=str, required=True, choices=["qwen3","deepseek","gemma","llama2"],
                         help='Model name to use (e.g., qwen3)')
 
     # Training arguments
