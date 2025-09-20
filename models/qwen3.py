@@ -211,6 +211,7 @@ class Qwen3(nn.Module):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.lm_head.weight = self.embed_tokens.weight
 
+
         self.apply(self._init_weights)
 
     def _init_weights(self, module):

@@ -353,6 +353,8 @@ class Deepseek(nn.Module):
             self.layers.append(Block(layer_id, args))
         self.norm = RMSNorm(args.hidden_size)
         self.head = nn.Linear(args.hidden_size, args.vocab_size)
+        
+        self.head.weight = self.embed.weight
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
     def forward(self, tokens: torch.Tensor, start_pos: int = 0, return_gate_info=False):

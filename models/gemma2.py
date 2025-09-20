@@ -388,6 +388,7 @@ class Gemma2(nn.Module):
             device=self.config.device
         )
         self.Linear = nn.Linear(config.hidden_size, config.vocab_size)
+        self.Linear.weight = self.embed_tokens.weight
     def forward(
         self,
         hidden_states: torch.Tensor,

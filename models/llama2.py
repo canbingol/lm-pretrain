@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
-from typing import Optional
-import math
 
 @dataclass
 class LlamaConfig:
@@ -131,7 +129,8 @@ class SelfAttention(nn.Module):
         self.n_heads_q = args.n_heads
         self.n_rep = self.n_heads_q // self.n_kv_heads
         self.head_dim = args.hidden_size // args.n_heads
-
+        self.hidden_size = args.hidden_size
+        
         self.wq = nn.Linear(args.hidden_size, self.n_heads_q * self.head_dim, bias=False)
         self.wk = nn.Linear(args.hidden_size, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(args.hidden_size, self.n_kv_heads * self.head_dim, bias=False)
@@ -180,21 +179,12 @@ class SelfAttention(nn.Module):
 
 
         # (B, seq_len, H_Q, Head_Dim) -> (B, H_Q, seq_len, Head_Dim)
-        xq = xq.transpose(1, 2)
-        # (B, Seq_Len_KV, H_Q, Head_Dim) -> (B, H_Q, Seq_Len_KV, Head_Dim)
-        keys = keys.transpose(1, 2)
-        # (B, Seq_Len_KV, H_Q, Head_Dim) -> (B, H_Q, Seq_Len_KV, Head_Dim)
-        values = values.transpose(1, 2)
-
-        scores = torch.matmul(xq, keys.transpose(2,3)) / math.sqrt(self.head_dim)
-        scores = apply_causal_mask(scores,seq_len)
-
-        scores = F.softmax(scores.float(),dim=-1).type_as(xq)   
-
-        outout = torch.matmul(scores, values)
+        attn_output = F.scaled_dot_product_attention(
+            xq, keys, values, is_causal=True, dropout_p= 0.0
+        )
         # (B, H_Q, seq_len, Head_Dim) -> (B, seq_len, H_Q, Head_Dim) -> (B, seq_len, Dim)
-        outout = (outout.transpose(1,2).contiguous().view(batch_size,seq_len,-1))
-        return self.wo(outout)
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
+        return self.wo(attn_output)
 
 class FFN(nn.Module):
 
@@ -233,7 +223,6 @@ class Decoder(nn.Module):
         out = h + self.ffn.forward(self.norm_2(h))
         return out
 
-
 class LLaMA2(nn.Module):
 
     def __init__(self, args:LlamaConfig):
@@ -254,6 +243,7 @@ class LLaMA2(nn.Module):
         self.norm = RMSNorm(self.dim, args.rms_norm_eps)
         self.linear = nn.Linear(args.hidden_size, self.vocab_size)
 
+        self.linear.weight = self.token_embd_table.weight
         self.freqs_complex = precompute_theta_freqs(
             seq_len=self.args.max_position_embeddings * 2,
             head_dim=self.args.hidden_size // self.args.n_heads,
