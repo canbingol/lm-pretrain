@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 ```bash
 cd lm-pretrain
-python main.py   --model gemma    --hf-data savasy/ttc4900   --vocab-size 5_000   --batch-size 10   --model-info   --epoch 2   --training-steps 400   --eval-steps 20 --eval-sample 20
+python main.py   --model gemma2    --hf-data savasy/ttc4900   --vocab-size 5_000   --batch-size 10   --model-info   --epoch 2   --training-steps 400   --eval-steps 20 --eval-sample 20
 ```
 
 ## Output Directory Structure

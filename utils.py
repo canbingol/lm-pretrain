@@ -79,7 +79,7 @@ def clear_gpu_memory():
 def build_argparser():
     parser = argparse.ArgumentParser()
     # model choosing
-    parser.add_argument('--model', type=str, required=True, choices=["qwen3","deepseek","gemma","llama2"],
+    parser.add_argument('--model', type=str, required=True, choices=["qwen3","deepseek","gemma2","llama2"],
                         help='Model name to use (e.g., qwen3)')
 
     # Training arguments

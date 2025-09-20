@@ -27,7 +27,7 @@ def main():
     model_map = {
         "qwen3": (Qwen3Config, Qwen3),
         "deepseek":(DeepseekConfig, Deepseek),
-        "gemma":(GemmaConfig,Gemma2),
+        "gemma2":(GemmaConfig,Gemma2),
         "llama2":(LlamaConfig,LLaMA2)
 
     }
