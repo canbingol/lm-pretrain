@@ -8,50 +8,29 @@ import torch.nn.functional as F
 @dataclasses.dataclass
 class GemmaConfig:
     config_name: str = "GemmaConfig"
+    kv_cache=True
     device: str = "cuda"
-    # The architecture of the model.
     architecture = 1
-    batch_size:int = 5
+    batch_size: int = 5
     training: bool = True
-    # The number of tokens in the vocabulary.
-    vocab_size: int = 32_768
-    # The maximum sequence length that this model might ever be used with.
-    max_position_embeddings: int = 256
-    # The number of blocks in the model.
-    num_hidden_layers: int = 8
-    # The number of attention heads used in the attention layers of the model.
-    num_attention_heads: int = 16
-    # The number of key-value heads for implementing attention.
-    num_key_value_heads: int = 16
-    # The hidden size of the model.
-    hidden_size: int = 128
-    # The dimension of the MLP representations.
-    intermediate_size: int = 256
-    # The number of head dimensions.
-    head_dim: int = 8
-    # The epsilon used by the rms normalization layers.
+    vocab_size: int = 50176
+    max_position_embeddings: int = 32768 // 16
+    num_hidden_layers: int = 12
+    num_attention_heads: int = 8
+    num_key_value_heads: int = 8
+    hidden_size: int = 640
+    intermediate_size: int = 1024
+    head_dim: int = 640 // 8
     rms_norm_eps: float = 1e-6
-    # The dtype of the weights.
-    dtype: str = 'float32'
-    # Whether a quantized version of the model is used.
+    dtype: str = "bfloat16"
     quant: bool = False
-    # The path to the model tokenizer.
-    tokenizer: Optional[str] = 'tokenizer/tokenizer.model'
-    # The types of attention used in the layers of the model.
-    # The size of the sliding window used for local attention.
+    tokenizer: Optional[str] = "tokenizer/tokenizer.model"
     sliding_window_size: Optional[int] = None
-    # If provided, the final logits are softcapped to this value.
     final_logit_softcapping: Optional[float] = None
-    # If provided, the attention logits are softcapped to this value.
     attn_logit_softcapping: Optional[float] = None
-    # If provided, the query vector is normalized using the
-    # inverse square root of this value instead of head_dim.
-    query_pre_attn_scalar: Optional[int] = None
-    # Whether to use pre mlp normalization.
+    query_pre_attn_scalar: Optional[int] = 80
     use_pre_ffw_norm: bool = False
-    # Whether to use post mlp normalization.
     use_post_ffw_norm: bool = False
-
 
 def precompute_theta_freqs(seq_len, head_dim,device: str,theta: float= 10000.0):
 
@@ -73,7 +52,7 @@ def repeat_kv(x: torch.tensor, n_rep: int) -> torch.tensor:
     batch_size, seq_len, n_kv_heads, head_dim = x.shape
     if n_rep == 1:
         return x
-    
+
     return(
         # (batch_size, seq_len, n_kv_heads, 1, head_dim)
         x[:, :, :, None, :]
@@ -88,7 +67,7 @@ def repeat_kv(x: torch.tensor, n_rep: int) -> torch.tensor:
 def apply_rope(x: torch.Tensor, freqs_complex: torch.Tensor, device: str):
     # x: (batch, seq_len, n_heads, head_dim)
     x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))  # (B, S, H, D//2)
-    
+
     # freqs_complex: (seq_len, head_dim//2) → reshape for broadcasting
     freqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)  # (1, S, 1, D//2)
     freqs_complex = freqs_complex.to(x_complex.device)
@@ -124,13 +103,13 @@ class RMSNorm(torch.nn.Module):
 
         # Normalize the input tensor to float32 for stability
         output = self._norm(x.float())
-        
+
         # Scale the normalized tensor using the learnable weight
         if self.add_unit_offset:
             output = output * (1 + self.weight.float())
         else:
             output = output * self.weight.float()
-        
+
         # Cast the output back to the input tensor's data type
         return output.type_as(x)
 
@@ -165,7 +144,7 @@ class GemmaMLP(nn.Module):
         outputs = self.down_proj(fuse)
 
         return outputs
-    
+
 def apply_causal_mask(scores: torch.tensor, seq_len: int):
 
     mask = torch.triu(torch.ones(seq_len,seq_len), diagonal=1)
@@ -206,7 +185,7 @@ class GemmaAttention(nn.Module):
             sliding_window_size (Optional[int]): Size of the sliding window for local attention.
         """
         super().__init__()
-        
+
         self.training = config.training
         self.num_heads = config.num_attention_heads
         self.num_kv_heads = config.num_key_value_heads
@@ -324,7 +303,7 @@ class GemmaAttention(nn.Module):
         # Project back to hidden size
         output = self.o_proj(output)
         return output
-    
+
 class Gemma2DecoderLayer(nn.Module):
 
     def __init__(
@@ -397,7 +376,7 @@ class Gemma2(nn.Module):
     ) -> torch.Tensor:
         _,seq_len = hidden_states.shape
         hidden_states = self.embed_tokens(hidden_states)
-        freqs_cis = self.freqs_complex[start_pos: start_pos +seq_len] 
+        freqs_cis = self.freqs_complex[start_pos: start_pos +seq_len]
         for layer in self.layers:
             hidden_states = layer(
                 hidden_states=hidden_states,

@@ -1,3 +1,16 @@
-**/__pycache__/
-qwen3/
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Data and output
+data/
 output/
+
+# Model checkpoints or temporary scripts
+qwen3/
+*.bin
+
+# OS-specific
+.DS_Store
+Thumbs.db

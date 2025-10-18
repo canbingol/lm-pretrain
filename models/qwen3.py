@@ -9,6 +9,7 @@ import numpy as np
 class Qwen3Config:
     # Model architecture
     config_name = "QwenConfig"
+    kv_cache=False
     hidden_size: int = 512
     num_attention_heads: int = 128
     num_hidden_layers: int = 20
@@ -25,7 +26,7 @@ class Qwen3Config:
     # Data parameters
     max_position_embeddings: int = 128
     vocab_size = 32768
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Regularization
     dropout: float = 0.0
@@ -51,7 +52,7 @@ class SwiGLUFeedForward(nn.Module):
     def forward(self, x):
         activated_x = F.silu(self.gate_proj(x)) * self.up_proj(x)
         return self.down_proj(self.dropout(activated_x))
-    
+
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
 
@@ -175,7 +176,7 @@ class GroupedQueryAttention(nn.Module):
         # 7. Reshape and final projection
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
         return self.o_proj(attn_output)
-    
+
 class Qwen3Decoder(nn.Module):
     def __init__(self, config):  # Pass the entire config object
         super().__init__()

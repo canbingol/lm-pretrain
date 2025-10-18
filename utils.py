@@ -1,18 +1,17 @@
 import os, gc
 import argparse
+import yaml
 from dataclasses import dataclass
 
 import torch
 import sentencepiece as spm
 
-from data_loader import prepare_tokenizer_data
 from train_tokenizer import TrainTokenizer
 
 from dataclasses import dataclass
 from typing import Optional
 import torch
 from torch.utils.data import DataLoader
-
 @dataclass(frozen=True)
 class TrainConfig:
     num_epochs: int
@@ -44,12 +43,14 @@ def load_model(model,inference,checkpoint_path, device,optimizer=None,scheduler=
     val_loss    = checkpoint["val_loss"]
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-    
+
     print(f"Checkpoint train loss : {train_loss} | validation loss : {val_loss}")
     return model, optimizer,scheduler
 
-def get_tokenizer(hf_data,text_column_name,output_path,vocab_size,train_tokenizer):
-    tokenizer_data_path = prepare_tokenizer_data(hf_data,text_column_name,output_path)
+def get_tokenizer(hf_data,text_column_name,output_path,vocab_size,train_tokenizer,gpu_id):
+    from data_prepare import prepare_tokenizer_data
+
+    tokenizer_data_path = prepare_tokenizer_data(hf_data,text_column_name,output_path,gpu_id)
     tokenizer_path = f"{output_path}/{os.path.basename(output_path)}.tokenizer.model"
     if train_tokenizer or not os.path.exists(tokenizer_path):
         tokenizer_path = TrainTokenizer(vocab_size,tokenizer_data_path,output_path).get_model_path()
@@ -79,55 +80,57 @@ def clear_gpu_memory():
 def build_argparser():
     parser = argparse.ArgumentParser()
     # model choosing
-    parser.add_argument('--model', type=str, required=True, choices=["qwen3","deepseek","gemma2","llama2"],
-                        help='Model name to use (e.g., qwen3)')
+    parser.add_argument("--config", type=str, help="Path to YAML config file")
+    parser.add_argument("--training-type", type=str, help="training type")
 
-    # Training arguments
-    parser.add_argument('--epoch', type=int, default=1,
-                        help='Number of training epochs')
+    parser.add_argument('--model', type=str, choices=["qwen3","deepseek","gemma2","llama2"])
+    parser.add_argument('--epoch', type=int)
+    parser.add_argument('--max-new-tokens', type=int)
+    parser.add_argument('--max-seq-len', type=int)
+    parser.add_argument('--prompt', type=str)
+    parser.add_argument('--training-steps', type=int)
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--eval-steps', type=int)
+    parser.add_argument('--eval-sample', type=int)
+    parser.add_argument('--vocab-size', type=int)
+    parser.add_argument('--batch-size', type=int)
+    parser.add_argument('--text-column-name', type=str)
+    parser.add_argument('--model-info', action="store_true")
+    parser.add_argument('--train-tokenizer', action="store_true")
+    parser.add_argument('--inference', action="store_true")
+    parser.add_argument('--force', action="store_true")
+    parser.add_argument('--pre-training-hf-data', type=str)
+    parser.add_argument('--it-hf-data', type=str)
+    parser.add_argument('--hf-tokenizer', type=str)
 
-    parser.add_argument('--max-new-tokens', type=int, default=256,
-                        help='Maximum number of tokens to generate during inference')
+    parser.add_argument('--world_size', type=int)
+    parser.add_argument('--checkpoint', type=str)
+    parser.add_argument('--saved-token-path', type=str)
 
-    parser.add_argument('--prompt', type=str, default="Merhaba ben ",
-                        help='Prompt text used for inference')
+    parser.add_argument('--shuffle', action='store_true', default=False)
+    parser.add_argument('--drop-last', action='store_true', default=True)
+    parser.add_argument('--num-workers', default=0, type=int)
+    parser.add_argument('--pin-memory', action='store_true', default=True)
+    parser.add_argument('--single-file', default=None, type=str)
 
-    parser.add_argument('--training-steps', type=int, default=None,
-                        help='Maximum number of training steps (if None, computed automatically)')
 
-    parser.add_argument('--lr', type=float, default=1e-3,
-                        help='Learning rate')
-
-    parser.add_argument('--eval-steps', type=int, default=200,
-                        help='Number of evaluation steps per evaluation run')
-    
-    parser.add_argument('--eval-sample', type=int, default=200,
-                        help='Number of evaluation steps per evaluation run')
-
-    parser.add_argument('--vocab-size', type=int, default=10_000,
-                        help='Vocabulary size of the model/tokenizer')
-
-    parser.add_argument('--batch-size', type=int, default=1,
-                        help='Batch size for training/evaluation')
-
-    parser.add_argument('--text-column_name', type=str, default="text",
-                        help='Name of the text column in the HF dataset')
-
-    parser.add_argument('--model-info', action="store_true", default=False,
-                        help='Print model configuration information')
-
-    parser.add_argument('--train-tokenizer', action="store_true", default=False,
-                        help='Enable training a new tokenizer')
-
-    parser.add_argument('--inference', action="store_true", default=False,
-                        help='Run inference instead of training')
-
-    parser.add_argument('--force', action="store_true", default=False,
-                        help='Start training without loading checkpoint')
-
-    parser.add_argument('--hf-data', type=str, default=None,
-                        help='Name or path of the Hugging Face dataset')
-
-    parser.add_argument('--device', type=str, default="cuda",
-                        help='Device')
     return parser
+
+def load_yaml(path):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+def merge_args_with_yaml(args,yaml_cfg):
+    for key, value in yaml_cfg.items():
+
+        key_ = key.replace("-","_")
+        if getattr(args, key_,None) in [None, False]:
+            setattr(args, key_, value)
+    return args
+
+def format_it_data(query, input, answer):
+    query_str = f"<|user|>{query}<|user_end|>\n"
+    input_str = f"<|input|>{input}<|input_end|>\n" if input else ""
+    answer_str = f"<|assistant|>{answer}<|assistant_end|>"
+
+    return query_str + input_str + answer_str

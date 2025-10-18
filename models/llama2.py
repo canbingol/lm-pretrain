@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class LlamaConfig:
     # Model architecture
     config_name = "Llama2"
+    kv_cache=True
     hidden_size: int = 128
     n_heads: int = 16
     n_layers: int = 8
@@ -15,9 +16,9 @@ class LlamaConfig:
     max_steps: int = 2000
 
     n_kv_heads: int = 16
-    sliding_window: int = 1024  
-    attention_bias: bool = False  
-    rms_norm_eps: float = 1e-6 
+    sliding_window: int = 1024
+    attention_bias: bool = False
+    rms_norm_eps: float = 1e-6
     qk_norm = False
 
     # Training parameters
@@ -28,7 +29,7 @@ class LlamaConfig:
     max_position_embeddings: int = 256
 
     vocab_size = 12_000
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # Evaluation
     eval_every: int = 500
@@ -82,7 +83,7 @@ def precompute_theta_freqs(seq_len, head_dim,device: str,theta: float= 10000.0):
 def apply_rope(x: torch.Tensor, freqs_complex: torch.Tensor, device: str):
     # x: (batch, seq_len, n_heads, head_dim)
     x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))  # (B, S, H, D//2)
-    
+
     # freqs_complex: (seq_len, head_dim//2) → reshape for broadcasting
     freqs_complex = freqs_complex.unsqueeze(0).unsqueeze(2)  # (1, S, 1, D//2)
     freqs_complex = freqs_complex.to(x_complex.device)
@@ -98,7 +99,7 @@ def repeat_kv(x: torch.tensor, n_rep: int) -> torch.tensor:
     batch_size, seq_len, n_kv_heads, head_dim = x.shape
     if n_rep == 1:
         return x
-    
+
     return(
         # (batch_size, seq_len, n_kv_heads, 1, head_dim)
         x[:, :, :, None, :]
@@ -130,17 +131,17 @@ class SelfAttention(nn.Module):
         self.n_rep = self.n_heads_q // self.n_kv_heads
         self.head_dim = args.hidden_size // args.n_heads
         self.hidden_size = args.hidden_size
-        
+
         self.wq = nn.Linear(args.hidden_size, self.n_heads_q * self.head_dim, bias=False)
         self.wk = nn.Linear(args.hidden_size, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(args.hidden_size, self.n_kv_heads * self.head_dim, bias=False)
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.hidden_size, bias=False)
-    
+
         self.cache_k = torch.zeros((args.batch_size, args.max_position_embeddings, self.n_kv_heads, self.head_dim))
         self.cache_v = torch.zeros((args.batch_size, args.max_position_embeddings, self.n_kv_heads, self.head_dim))
-        
+
     def forward(self, x: torch.tensor, freqs_comlex: torch.tensor, start_pos: int=None):
-        
+
         batch_size, seq_len, _ = x.shape # (batch_size, seq_len, dim)
         #! (batch_size, seq_len,dim) -> = (batch_size, seq_len, head_dim * n_heads)
         xq = self.wq(x)
@@ -148,7 +149,7 @@ class SelfAttention(nn.Module):
         #! (batch_size, seq_len,dim) -> = (batch_size, seq_len, n_kv_head_dim * n_kv_heads)
         xk = self.wk(x)
         xv = self.wv(x)
-        
+
         #! (batch_size, seq_len, dim) -> (batch_size, seq_len, n_head_q, head_dim)
         xq = xq.view((batch_size, seq_len, self.n_heads_q, self.head_dim))
 
@@ -166,7 +167,7 @@ class SelfAttention(nn.Module):
 
             keys = self.cache_k[:batch_size, :start_pos + seq_len]
             values = self.cache_v[:batch_size, :start_pos + seq_len]
-        
+
         else:
             keys = xk
             values = xv
@@ -195,7 +196,7 @@ class FFN(nn.Module):
         self.w2 = nn.Linear(args.intermediate_size, args.hidden_size, bias=False)
         self.w3 = nn.Linear(args.hidden_size, args.intermediate_size, bias=False)
 
-    
+
     def forward(self, x: torch.tensor):
         swish = F.silu(self.w1(x))
         x_V = self.w3(x)
@@ -208,7 +209,7 @@ class Decoder(nn.Module):
 
     def __init__(self, args:LlamaConfig):
         super().__init__()
-        dim = args.hidden_size  
+        dim = args.hidden_size
 
         self.attn = SelfAttention(args)
         self.ffn = FFN(args)

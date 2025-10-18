@@ -1,0 +1,7 @@
+# -----------------------------
+# Inference configuration
+# -----------------------------
+model: "gemma2"
+tokenizer_path: "vngrs-ai/Kumru-2B"
+prompt: "merhaba"
+checkpoint: "./output/gemma2/gemma2_best_model.pt"
