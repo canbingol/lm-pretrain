@@ -77,7 +77,7 @@ output/
 ```
 
 > [!WARNING]
-> We no longer train a tokenizer; instead, I'm using a pretrained tokenizer from Hugging Face.
+> Pipeline no longer train a tokenizer; instead, it using a pretrained tokenizer from Hugging Face.
 
 > If the `--force` flag is used, a new directory like `output/<model_name>_force/` is created.
 > In this case, **all assets including tokenizer and checkpoints will be regenerated**, and no previously saved files will be reused.
