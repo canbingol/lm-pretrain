@@ -1,8 +1,8 @@
 # -----------------------------
 # Training configuration
 # -----------------------------
-model: "gemma2"
-world_size: 4
+model: "gpt2"
+world_size: 1
 force: False
 train-tokenizer: False
 model_info: True
@@ -10,20 +10,20 @@ model_info: True
 inference: False
 max_new_tokens: 64
 prompt: "merhaba"
-checkpoint: "./output/gemma2/gemma2_best_model.pt"
-pre_training_hf_data: "canbingol/vngrs-web-corpus-200k"
+checkpoint: "./output/gpt2/GPT2_best_model_data500k_loss4.3.pt"
+pre_training_hf_data: "canbingol/vngrs-web-corpus-500k"
 it_hf_data: "merve/turkish_instructions"
 text_column_name: "text"
 saved_token_path: "./data/pretrain/default_tokenizer"
-hf_tokenzier: "vngrs-ai/Kumru-2B"
+hf_tokenizer: "vngrs-ai/Kumru-2B"
 
-epoch: 1
+epoch: 5
 training_steps: None
-lr: 1e-3
-eval-steps: 100
-eval_sample: 10
+lr: 1e-4
+eval-steps: 5000
+eval_sample: 500
 vocab_size: 50176
-batch_size: 60
+batch_size: 1
 max_seq_len: 256
 shuffle: False
 drop_last: True

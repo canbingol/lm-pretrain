@@ -1,5 +1,6 @@
 import dataclasses
 from typing import List, Tuple,Optional, Sequence
+import math
 
 import torch
 import torch.nn as nn
@@ -145,14 +146,16 @@ class GemmaMLP(nn.Module):
 
         return outputs
 
-def apply_causal_mask(scores: torch.tensor, seq_len: int):
+def apply_causal_mask(scores: torch.tensor):
+    q_len, k_len = scores.size(-2), scores.size(-1)
 
-    mask = torch.triu(torch.ones(seq_len,seq_len), diagonal=1)
-    mask = mask.to(scores.device)
+    mask = torch.triu(
+        torch.ones(q_len,k_len, device=scores.device, dtype=torch.bool),
+        diagonal=1
+        )
 
-    mask = torch.triu(torch.ones(seq_len, seq_len, device=scores.device), diagonal=1).bool()
+
     scores = scores.masked_fill(mask, float("-inf"))
-
     return scores
 
 class GemmaAttention(nn.Module):
@@ -274,35 +277,14 @@ class GemmaAttention(nn.Module):
         key = key.to(xq.device)
         value = value.to(xq.device)
 
-        # Compute scaled dot-product attention
-        q = xq.transpose(1, 2)  # (batch_size, num_heads, seq_len, head_dim)
-        k = key.transpose(1, 2)
-        v = value.transpose(1, 2)
-        q.mul_(self.scaling)  # Scale query
-        scores = torch.matmul(q, k.transpose(-1, -2))  # Attention scores
+        attn_output = F.scaled_dot_product_attention(
+            xq, key, value, is_causal=True, dropout_p= 0.0
+        )
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.hidden_size)
 
-        # Apply sliding window masking if needed
-        if self.sliding_window_size is not None:
-            sliding_mask = torch.triu(torch.ones_like(mask), -self.sliding_window_size + 1)
-            sliding_mask = sliding_mask * torch.tril(sliding_mask, self.sliding_window_size - 1)
-            mask = torch.where(sliding_mask == 1, mask, -2.3819763e38)
+        attn_output = self.o_proj(attn_output)
 
-        # Apply softcapping to scores
-        if self.attn_logit_softcapping is not None:
-            scores = scores / self.attn_logit_softcapping
-            scores = torch.tanh(scores) * self.attn_logit_softcapping
-
-        # Add mask and compute attention probabilities
-        scores = apply_causal_mask(scores,seq_len)
-        scores = F.softmax(scores.float(), dim=-1).type_as(q)
-
-        # Compute attention output
-        output = torch.matmul(scores, v)  # Attention applied to values
-        output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
-
-        # Project back to hidden size
-        output = self.o_proj(output)
-        return output
+        return attn_output
 
 class Gemma2DecoderLayer(nn.Module):
 
@@ -354,6 +336,8 @@ class Gemma2(nn.Module):
         self.name = "gemma2"
         self.config = config
         self.embed_tokens = nn.Embedding(config.vocab_size,config.hidden_size)
+        nn.init.normal_(self.embed_tokens.weight, mean=0.0, std=0.02)
+
         self.head_dim = config.num_attention_heads
         self.seq_length = config.max_position_embeddings
         self.n_layers = config.num_hidden_layers
@@ -366,8 +350,9 @@ class Gemma2(nn.Module):
             head_dim=self.config.hidden_size // self.config.num_attention_heads,
             device=self.config.device
         )
-        self.Linear = nn.Linear(config.hidden_size, config.vocab_size)
+        self.Linear = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.Linear.weight = self.embed_tokens.weight
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -384,5 +369,6 @@ class Gemma2(nn.Module):
                 start_pos=start_pos
             )
         hidden_states = self.norm(hidden_states)
-        out = self.Linear(hidden_states)
+        out = self.Linear(hidden_states) / math.sqrt(self.config.hidden_size)
+
         return out

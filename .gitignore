@@ -6,6 +6,7 @@ __pycache__/
 # Data and output
 data/
 output/
+logs/
 
 # Model checkpoints or temporary scripts
 qwen3/

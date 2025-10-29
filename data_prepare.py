@@ -66,11 +66,13 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
             for file in bar:
                 tokens = np.memmap(os.path.join(exist_data_dir, file), dtype=np.uint16, mode="r")
 
-                for i in range(0,len(tokens),max_seq_len):
-                    input_ = tokens[i: i+max_seq_len]
-                    target_ = tokens[i+1: i+max_seq_len]
-
+                for i in range(0,len(tokens) -1 ,max_seq_len):
+                    input_ = tokens[i: i + max_seq_len]
+                    target_ = tokens[i + 1: i + max_seq_len]
                     target_ = np.concatenate((target_,np.array([pad_token],dtype= np.uint16)))
+
+                    if len(input_) < max_seq_len:
+                        continue
 
                     self.input_ids.append(torch.tensor(input_))
                     self.target_ids.append(torch.tensor(target_))
@@ -91,7 +93,7 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
 
     train_dataloader = DataLoader(
         dataset = train_dataset,
-        sampler = DistributedSampler(dataset=train_dataset),
+        sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
         batch_size = batch_size,
         shuffle = shuffle,
         drop_last = drop_last,
@@ -101,7 +103,7 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
 
     val_dataloader = DataLoader(
         dataset = val_dataset,
-        sampler = DistributedSampler(dataset=val_dataset),
+        sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
         batch_size = batch_size,
         shuffle = shuffle,
         drop_last = drop_last,
@@ -124,8 +126,9 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
         return 0
 
     class ITDataset(Dataset):
-        def __init__(self, mode, data, tokenizer, max_seq_len, pad_token: int= 0, assistant_token_ids: list= [289, 353, 258, 353, 291], gpu_id=gpu_id):
+        def __init__(self, mode, data, tokenizer, max_seq_len, pad_token: int= 0, gpu_id=gpu_id):
             super().__init__()
+            assistant_token_ids = tokenizer.encode("<|start_header_id|>assistant<|end_header_id|>", add_special_tokens=False)
             self.input_ids, self.target_ids = [], []
             bar = tqdm(data, total=len(data), desc=f"iterating IT data for {mode}") if gpu_id == 0 else data
             for item in bar:
@@ -142,7 +145,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
 
                 start_idx = find_sub(target_, assistant_token_ids)
                 mask_start = max(0, start_idx-1)
-                target_[:mask_start] = -100
+                target_[:mask_start] = 0
                 self.input_ids.append(input_)
                 self.target_ids.append(target_)
 
@@ -154,7 +157,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
             return self.input_ids[idx], self.target_ids[idx]
 
     data = load_dataset(hf_dataset, split= "train")
-    val_ratio = 0.05
+    val_ratio = 0.20
     val_len = int(len(data) * val_ratio)
 
     train_data = data.select(range(0, len(data) - val_len))
@@ -167,7 +170,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
     train_dataloader = DataLoader(
         dataset = train_dataset,
         batch_size = batch_size,
-        sampler = DistributedSampler(dataset=train_dataset),
+        sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
         shuffle = False,
         drop_last = True,
         num_workers = 0,
@@ -177,7 +180,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
     val_dataloader = DataLoader(
         dataset = val_dataset,
         batch_size = batch_size,
-        sampler = DistributedSampler(dataset=val_dataset),
+        sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
         shuffle = False,
         drop_last = True,
         num_workers = 0,
@@ -192,7 +195,7 @@ if __name__ == "__main__":
     tokenizer_path = "vngrs-ai/Kumru-2B"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
-    pre_train_dataset = "canbingol/vngrs-web-corpus-200k"
+    pre_train_dataset = "canbingol/vngrs-web-corpus-500k"
 
     create_tokens_file(pre_train_dataset,"vngrs-ai/Kumru-2B", base_dir="./data/pretrain")
 

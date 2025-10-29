@@ -17,7 +17,7 @@ class DeepseekConfig:
     batch_size: int = 2
     max_position_embeddings: int = 128
     dtype: Literal["bf16", "fp8"] = "bf16"
-    vocab_size: int = 32_768
+    vocab_size: int = 50176
     hidden_size: int = 512
     inter_dim: int = 2 * hidden_size
     moe_inter_dim: int = 704
@@ -94,7 +94,7 @@ Returns:
         return ramp_func
 
     freqs = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-    
+
     #? If the sequence length exceeds the pretraining limit, smoothly adjust the frequencies
     if seqlen > args.original_seq_len:
         low, high = find_correction_range(beta_fast, beta_slow, dim, base, args.original_seq_len)
@@ -151,7 +151,7 @@ class MLA(nn.Module):
             self.wq_a = nn.Linear(self.dim, self.q_lora_rank) # W_DQ
             self.q_norm = RMSNorm(self.q_lora_rank)
             self.wq_b = nn.Linear(self.q_lora_rank, self.n_head * self.qk_head_dim) # in features: c_t^Q  out features: q_t^C
-        
+
         self.wkv_a = nn.Linear(self.dim, self.kv_lora_rank + self.qk_rope_head_dim) # here, W^DKV and W_ht^Kr computations are combined
         self.kv_norm = RMSNorm(self.kv_lora_rank)
         self.wkv_b = nn.Linear(self.kv_lora_rank, self.n_head * (self.qk_nope_head_dim + self.v_head_dim)) # here, W^uk  x c_t^kv and W^uv x c_t^kv computations are combined
@@ -169,7 +169,7 @@ class MLA(nn.Module):
     def forward(self, x:torch.Tensor, start_pos:int, freqs_cis:torch.Tensor, mask:Optional[torch.Tensor]):
         batch_size, seq_len, _ = x.size()
         end_pos = start_pos + seq_len
-        
+
         if self.q_lora_rank == 0:
             q = self.wq(x)
         else:
@@ -186,11 +186,11 @@ class MLA(nn.Module):
         wkv_b = wkv_b.view(self.n_local_head, -1, self.kv_lora_rank)
         q_nope = torch.einsum('bshd,hdc->bshc', q_nope, wkv_b[:, :self.qk_nope_head_dim])
         if not self.isTrain:
-                    
+
             self.kv_cache[:batch_size, start_pos:end_pos] = self.kv_norm(kv)
             self.pe_cache[:batch_size, start_pos:end_pos] = k_pe.squeeze(2)
 
-        assert q_nope.shape[-1] == self.kv_cache.shape[-1], "Head dim mismatch between q_nope and kv_cache" 
+        assert q_nope.shape[-1] == self.kv_cache.shape[-1], "Head dim mismatch between q_nope and kv_cache"
         kv = self.kv_cache[:batch_size, :end_pos].unsqueeze(2)  # -> [B, T, 1, R]
         pe = self.pe_cache[:batch_size, :end_pos].unsqueeze(2)  # -> [B, T, 1, R]
         scores = (
@@ -209,7 +209,7 @@ class MLA(nn.Module):
         return x
 
 class Gate(nn.Module):
-    def __init__(self, args): 
+    def __init__(self, args):
         super().__init__()
         self.dim = args.hidden_size
         self.topk = args.n_activated_experts
@@ -232,7 +232,7 @@ class Gate(nn.Module):
         #? Used to decrease scores of frequently selected experts (or boost rarely selected ones).
         if self.bias is not None:
             scores = scores + self.bias
-        
+
         #? If experts are divided into groups, select top-k groups at the group level
         if self.n_groups > 1:
             scores = scores.view(x.size(0), self.n_groups, -1)
@@ -245,7 +245,7 @@ class Gate(nn.Module):
             # Mask the remaining groups (their experts do not run)
             mask = scores.new_ones(x.size(0), self.n_groups, dtype=bool).scatter_(1, indices, False)
             scores = scores.masked_fill_(mask.unsqueeze(-1), float('-inf')).flatten(1)
-        
+
         # Top-k selection among experts (e.g., activate 2 experts)
         indices = torch.topk(scores, self.topk, dim=-1)[1]
         # Retrieve the scores of the selected experts from the original score matrix
@@ -253,11 +253,11 @@ class Gate(nn.Module):
 
         if self.score_func == 'sigmoid':
             weights = weights /( weights.sum(dim=-1, keepdim=True))
-        
+
         weights =weights* self.route_scale
 
         self.last_scores = original_scores.detach()  # [B*T, N_r]
-        self.last_topk = indices.detach()  
+        self.last_topk = indices.detach()
         return weights.type_as(x), indices
 
 
@@ -286,7 +286,7 @@ class MoE(nn.Module):
         self.expert_start_idx = rank * self.n_local_experts
         self.expert_end_idx = self.expert_start_idx + self.n_local_experts
         self.gate = Gate(args)
-        
+
         # routed experts
         self.experts = nn.ModuleList([MLP(args.hidden_size, args.moe_inter_dim) if self.expert_start_idx <= i < self.expert_end_idx else None for i in range(self.n_routed_experts)])
         # shared experts that every input passes through
@@ -298,10 +298,10 @@ class MoE(nn.Module):
         x = x.view(-1, self.dim)
         # Gating mechanism → scores (weights) and indices of selected experts
         weights, indices = self.gate(x)
-        
+
         # Empty tensor (same shape) to accumulate expert outputs
         y = torch.zeros_like(x)
-        
+
         # Counting how many times each expert is selected. This prevents an expert from being used too much or too little within the MoE
         counts = torch.bincount(indices.flatten(), minlength=self.n_routed_experts).tolist()
 
@@ -325,7 +325,7 @@ class MoE(nn.Module):
 class Block(nn.Module):
 
     def __init__(self, layer_ids:int, args):
-        
+
         super().__init__()
         self.attn = MLA(args)
         self.ffn = MLP(args.hidden_size, args.inter_dim) if layer_ids < args.n_dense_layers else MoE(args)
@@ -353,7 +353,7 @@ class Deepseek(nn.Module):
             self.layers.append(Block(layer_id, args))
         self.norm = RMSNorm(args.hidden_size)
         self.head = nn.Linear(args.hidden_size, args.vocab_size)
-        
+
         self.head.weight = self.embed.weight
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 

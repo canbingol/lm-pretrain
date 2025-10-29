@@ -3,34 +3,38 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 
+from dataclasses import dataclass
+import torch
+
 @dataclass
 class LlamaConfig:
     # Model architecture
-    config_name = "Llama2"
-    kv_cache=True
-    hidden_size: int = 128
-    n_heads: int = 16
-    n_layers: int = 8
-    intermediate_size: int = 256
-    batch_size: int = 5
+    config_name = "Llama2-100M"
+    kv_cache: bool = True
+    hidden_size: int = 512
+    n_heads: int = 8
+    n_layers: int = 12
+    intermediate_size: int = 2048
+    batch_size: int = 8
     max_steps: int = 2000
 
-    n_kv_heads: int = 16
+    n_kv_heads: int = 8
     sliding_window: int = 1024
     attention_bias: bool = False
     rms_norm_eps: float = 1e-6
-    qk_norm = False
+    qk_norm: bool = False
 
     # Training parameters
     gradient_accumulation_steps: int = 4
     muon_lr: float = 0.01
     train: bool = True
+
     # Data parameters
-    max_position_embeddings: int = 256
+    max_position_embeddings: int = 2048
+    vocab_size: int = 12000
 
-    vocab_size = 12_000
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     # Evaluation
     eval_every: int = 500
     eval_steps: int = 100
@@ -40,8 +44,8 @@ class LlamaConfig:
     dropout: float = 0.1
     grad_clip: float = 1.0
 
-    drop_last = True
-    shuffle = False
+    drop_last: bool = True
+    shuffle: bool = False
 
     def __post_init__(self):
         self.d_k = self.hidden_size // self.n_heads

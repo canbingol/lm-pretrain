@@ -1,5 +1,5 @@
 
-import argparse
+import argparse, sys
 import torch
 from transformers import AutoTokenizer
 
@@ -11,13 +11,14 @@ from models.deepseekV2 import Deepseek, DeepseekConfig
 from models.qwen3 import Qwen3,Qwen3Config
 from models.gemma2 import Gemma2, GemmaConfig
 from models.llama2 import LLaMA2, LlamaConfig
+from models.gpt2 import GPTConfig, GPTModel
 
 @torch.no_grad()
-def generate(model, tokenizer, prompt, device="cpu", max_new_tokens=64,temprature=1.0,top_k=50 ):
+def generate(model, tokenizer, prompt, device="cuda", max_new_tokens=64,temprature=0.67,top_k=100 ):
     model.to(device).eval()
     input_ids = tokenizer.encode(prompt,return_tensors="pt")
     input_ids = input_ids[None,:].to(device) if input_ids.ndim == 1 else input_ids.to(device)
-    for _ in range(max_new_tokens):
+    for i in range(max_new_tokens):
         logits = model(input_ids)
         logits = logits[:,-1,:] / temprature
 
@@ -31,6 +32,8 @@ def generate(model, tokenizer, prompt, device="cpu", max_new_tokens=64,tempratur
         new_token = torch.multinomial(probs, num_samples=1)
 
         input_ids = torch.cat((input_ids,new_token),dim=-1)
+        sys.stdout.write(f"\r[Eval {i+1:4d}/{max_new_tokens}] {i+1}th token generated...")
+        sys.stdout.flush()
     message = tokenizer.decode(input_ids.squeeze(0))
     print(message)
 
@@ -38,7 +41,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--config", type=str, help="Path to YAML config file")
-    parser.add_argument('--model', type=str, choices=["qwen3","deepseek","gemma2","llama2"])
+    parser.add_argument('--model', type=str, choices=["qwen3","deepseek","gemma2","llama2","gpt2"])
     parser.add_argument('--checkpoint', type=str)
     parser.add_argument('--tokenizer-path', type=str)
     parser.add_argument('--prompt', type=str)
@@ -55,7 +58,8 @@ def main():
         "qwen3": (Qwen3Config, Qwen3),
         "deepseek":(DeepseekConfig, Deepseek),
         "gemma2":(GemmaConfig,Gemma2),
-        "llama2":(LlamaConfig,LLaMA2)
+        "llama2":(LlamaConfig,LLaMA2),
+        "gpt2": (GPTConfig, GPTModel)
 
     }
     snapshot = torch.load(cp,map_location="cuda")

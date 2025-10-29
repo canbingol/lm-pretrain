@@ -1,7 +1,7 @@
 # -----------------------------
 # Inference configuration
 # -----------------------------
-model: "gemma2"
+model: "gpt2"
 tokenizer_path: "vngrs-ai/Kumru-2B"
-prompt: "merhaba"
-checkpoint: "./output/gemma2/gemma2_best_model.pt"
+prompt: "adam bir gün"
+checkpoint: "./output/gpt2/GPT2_best_model_data500k_loss4.3.pt"
