@@ -198,7 +198,7 @@ if __name__ == "__main__":
     pre_train_dataset = "canbingol/vngrs-web-corpus-500k"
 
     create_tokens_file(pre_train_dataset,"vngrs-ai/Kumru-2B", base_dir="./data/pretrain")
-
+    exit()
     files = "./data/pretrain/default_tokenizer"
     train_loader, val_loader = prepare_pretrain_data(files,10)
     print(f"len train loader: {len(train_loader)}, len val loader: {len(val_loader)}")

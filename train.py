@@ -149,13 +149,13 @@ def train_model(train_state: TrainState,data_loaders: DataLoaders, training_conf
                         model,val_loader,device,eval_sample, val_loss_file
                     )
                     val_losses.append(val_loss)
-
+                    ppl = torch.exp(val_loss)
                     track_tokens_seen.append(token_seen)
                     sys.stdout.write("\r")
                     sys.stdout.write(" " * 50 + "\r")
                     sys.stdout.flush()
                     logger.info(f"Ep {epoch+1} (Step {global_step:06d}): "
-                        f"Train loss {loss:.3f} Val loss {val_loss:.3f}")
+                        f"Train loss {loss:.3f} Val loss {val_loss:.3f}, Perplexity {ppl}")
 
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
