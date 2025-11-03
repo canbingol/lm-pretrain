@@ -20,8 +20,8 @@ hf_tokenizer: "vngrs-ai/Kumru-2B"
 epoch: 5
 training_steps: None
 lr: 1e-4
-eval-steps: 5000
-eval_sample: 500
+eval-steps: 10
+eval_sample: 1
 vocab_size: 50176
 batch_size: 1
 max_seq_len: 256

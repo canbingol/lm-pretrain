@@ -49,7 +49,7 @@ def create_tokens_file(hf_dataset: str ,hf_tokenizer, base_dir: str="./data/pret
 
     return save_dir
 
-def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_last=True, num_workers=0, pin_memory=True, single_file: int= None, gpu_id: int= 0):
+def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_last=True, num_workers=0, pin_memory=True, single_file: int= None, gpu_id: int= 0, skip_ddp=False):
 
     class PretrainDataset(Dataset):
         def __init__(self, mode, exist_data_dir, max_seq_len, pad_token):
@@ -90,26 +90,45 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
     val_dataset = PretrainDataset(mode= "validation", exist_data_dir= token_file_data_dir,
                                     max_seq_len= 512, pad_token= 0)
 
+    if skip_ddp:
+        train_dataloader = DataLoader(
+            dataset = train_dataset,
+            batch_size = batch_size,
+            shuffle = shuffle,
+            drop_last = drop_last,
+            num_workers = num_workers,
+            pin_memory = pin_memory
+        )
 
-    train_dataloader = DataLoader(
-        dataset = train_dataset,
-        sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
-        batch_size = batch_size,
-        shuffle = shuffle,
-        drop_last = drop_last,
-        num_workers = num_workers,
-        pin_memory = pin_memory
-    )
+        val_dataloader = DataLoader(
+            dataset = val_dataset,
+            batch_size = batch_size,
+            shuffle = shuffle,
+            drop_last = drop_last,
+            num_workers = num_workers,
+            pin_memory = pin_memory
+        )
+    else:
+        train_dataloader = DataLoader(
+            dataset = train_dataset,
+            sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
+            batch_size = batch_size,
+            shuffle = shuffle,
+            drop_last = drop_last,
+            num_workers = num_workers,
+            pin_memory = pin_memory
+        )
 
-    val_dataloader = DataLoader(
-        dataset = val_dataset,
-        sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
-        batch_size = batch_size,
-        shuffle = shuffle,
-        drop_last = drop_last,
-        num_workers = num_workers,
-        pin_memory = pin_memory
-    )
+        val_dataloader = DataLoader(
+            dataset = val_dataset,
+            sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
+            batch_size = batch_size,
+            shuffle = shuffle,
+            drop_last = drop_last,
+            num_workers = num_workers,
+            pin_memory = pin_memory
+        )
+
 
     gc.collect()
     return train_dataloader, val_dataloader

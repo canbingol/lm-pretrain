@@ -1,6 +1,7 @@
 import time, os, sys
 from dataclasses import astuple
 from tqdm import tqdm
+import math
 
 import torch
 from torch.optim.lr_scheduler import LinearLR, SequentialLR, CosineAnnealingLR
@@ -149,7 +150,7 @@ def train_model(train_state: TrainState,data_loaders: DataLoaders, training_conf
                         model,val_loader,device,eval_sample, val_loss_file
                     )
                     val_losses.append(val_loss)
-                    ppl = torch.exp(val_loss)
+                    ppl = math.exp(val_loss)
                     track_tokens_seen.append(token_seen)
                     sys.stdout.write("\r")
                     sys.stdout.write(" " * 50 + "\r")
