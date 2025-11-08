@@ -58,6 +58,8 @@ def build_argparser():
 
     parser.add_argument('--model', type=str, choices=["qwen3", "deepseek", "gemma2", "llama2", "gptoss", "gpt2"])
     parser.add_argument('--epoch', type=int)
+    parser.add_argument('--world-size', type=int)
+
     parser.add_argument('--max-new-tokens', type=int)
     parser.add_argument('--max-seq-len', type=int)
     parser.add_argument('--prompt', type=str)
@@ -141,3 +143,12 @@ def setup_logger(rank=0, log_dir="logs", filename="train.log"):
         handlers=handlers
     )
     return logging.getLogger(__name__)
+
+
+def get_unique_filename(path):
+    counter = 1
+    new_path = path
+    while os.path.exists(new_path):
+        new_path = f"{path}_{counter}"
+        counter += 1
+    return new_path

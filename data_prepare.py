@@ -81,7 +81,10 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
             return len(self.input_ids)
 
         def __getitem__(self, idx):
-            return self.input_ids[idx], self.target_ids[idx]
+            x = torch.as_tensor(self.input_ids[idx], dtype=torch.long)
+            y = torch.as_tensor(self.target_ids[idx], dtype=torch.long)
+            
+            return x, y
 
 
     train_dataset = PretrainDataset(mode= "train", exist_data_dir= token_file_data_dir,

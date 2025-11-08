@@ -24,15 +24,13 @@ from utils import (
     DataLoaders,
     merge_args_with_yaml,
     load_yaml,
-    setup_logger
+    setup_logger,
+    get_unique_filename
 )
 
 # model registry - separated by domain
-from models.deepseekV2 import Deepseek, DeepseekConfig
 from models.qwen3 import Qwen3, Qwen3Config
-from models.gemma2 import Gemma2, GemmaConfig
 from models.llama2 import LLaMA2, LlamaConfig
-from models.gpt_oss import GPT_OSS, OSSConfig
 from models.gpt2 import GPTConfig, GPTModel
 
 
@@ -40,8 +38,11 @@ from models.gpt2 import GPTConfig, GPTModel
 torch.manual_seed(42)
 
 
-def ddp_setup():
-    init_process_group(backend="nccl")
+def ddp_setup(WORLD_SIZE):
+    
+    backend = "gloo" if WORLD_SIZE < 2 else "nccl"
+
+    init_process_group(backend=backend)
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
 def get_pretrain_data(gpu_id, saved_tokens_path, BATCH_SIZE, SHUFFLE,
@@ -71,7 +72,6 @@ def get_it_data(gpu_id, tokenizer, IT_HF_DATA, BATCH_SIZE, MAX_SEQ_LEN):
     return train_loader, val_loader
 
 def main():
-    ddp_setup()
 
     parser = build_argparser()
     args = parser.parse_args()
@@ -79,6 +79,7 @@ def main():
         yaml_cfg = load_yaml(args.config)
         args = merge_args_with_yaml(args, yaml_cfg)
 
+    WORLD_SIZE = int(args.world_size)
     TRAINING_TYPE = args.training_type
     MODEL = str(args.model)
     VOCAB_SIZE = int(args.vocab_size)
@@ -107,6 +108,7 @@ def main():
     if args.training_steps not in [None, "None", "none", ""]
     else None
     )
+    ddp_setup(WORLD_SIZE)
 
     saved_tokens_path = SAVED_TOKEN_PATH
 
@@ -117,10 +119,7 @@ def main():
 
     model_map = {
         "qwen3": (Qwen3Config, Qwen3),
-        "deepseek":(DeepseekConfig, Deepseek),
-        "gemma2":(GemmaConfig,Gemma2),
         "llama2":(LlamaConfig,LLaMA2),
-        "gptoss": (OSSConfig, GPT_OSS),
         "gpt2": (GPTConfig, GPTModel)
 
     }
@@ -128,6 +127,9 @@ def main():
     # Initialize model with cuda device
     ConfigClass, ModelClass = model_map[MODEL]
     config = ConfigClass()
+
+    config.vocab_size = VOCAB_SIZE
+    config.batch_size = BATCH_SIZE
 
     gpu_id = int(os.environ["LOCAL_RANK"])
     DEVICE = torch.device(f"cuda:{gpu_id}")
@@ -138,24 +140,21 @@ def main():
 
     model = ModelClass(config).to(DEVICE)
 
-    config.vocab_size = VOCAB_SIZE
-    config.batch_size = BATCH_SIZE
-
-
-    if FORCE:
-        OUTPUT_PATH = f"output/{MODEL}__{TRAINING_TYPE}force"
-    else:
-        OUTPUT_PATH = f"output/{MODEL}_{TRAINING_TYPE}"
-
-    os.makedirs(OUTPUT_PATH, exist_ok=True)
-
-    #tokenizer = get_tokenizer(args.hf_data,args.text_column_name,OUTPUT_PATH,config.vocab_size,args.train_tokenizer,gpu_id)
-    tokenizer = AutoTokenizer.from_pretrained(HF_TOKENIZER)
-    #checkpoint_path = f"{OUTPUT_PATH}/{MODEL}_best_model.pt"
-
     if gpu_id == 0:
         n_params = sum(p.numel() for p in model.parameters())
         n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    if FORCE:
+        OUTPUT_PATH = f"output/{MODEL}/{TRAINING_TYPE}/{n_params/1e6:.2f}M_force"
+    else:
+        OUTPUT_PATH = f"output/{MODEL}_{TRAINING_TYPE}_{n_params/1e6:.2f}M"
+
+    OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
+
+    os.makedirs(OUTPUT_PATH, exist_ok=True)
+    tokenizer = AutoTokenizer.from_pretrained(HF_TOKENIZER)
+
+    if gpu_id == 0:
 
         logger.info("=" * 80)
         logger.info(f"Python: {platform.python_version()}, PyTorch: {torch.__version__}")

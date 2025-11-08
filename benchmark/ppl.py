@@ -3,9 +3,7 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 
-from models.deepseekV2 import Deepseek, DeepseekConfig
 from models.qwen3 import Qwen3,Qwen3Config
-from models.gemma2 import Gemma2, GemmaConfig
 from models.llama2 import LLaMA2, LlamaConfig
 from models.gpt2 import GPTConfig, GPTModel
 
@@ -20,8 +18,6 @@ class PPLBenchmark:
 
         model_map = {
         "qwen3": (Qwen3Config, Qwen3),
-        "deepseek":(DeepseekConfig, Deepseek),
-        "gemma2":(GemmaConfig,Gemma2),
         "llama2":(LlamaConfig,LLaMA2),
         "gpt2": (GPTConfig, GPTModel)
 
@@ -72,8 +68,11 @@ class PPLBenchmark:
                 distinct_list.append(distinct_ratio)
                 entropy_list.append(entropy)
 
-                print(f"loss: {loss:.4f}, perplexity: {ppl:.4f}, accuracy : {acc:.4f}, distinct_ratio : {distinct_ratio:.4f}, entropy : {entropy:.4f}")
+                log = f"{loss:.4f},{ppl:.4f},{acc:.4f},{distinct_ratio:.4f},{entropy:.4f}"
 
+                with open("log.txt", "a", encoding="utf-8") as f:
+                    f.write(f"{log}\n")
+                    
             print("="*30)
             print("Average Result")
             print(f"Loss : {sum(loss_list) / len(loss_list):.4f}")
@@ -84,7 +83,7 @@ class PPLBenchmark:
             print("="*30)
 
 if __name__ == "__main__":
-    MODEL_PATH = "./output/gpt2_pre-train/GPT2_best_model.pt"
+    MODEL_PATH = "./output/gpt2_pre-train/GPT2_best_model_data500k_loss4.3.pt"
     MODEL_TYPE = "gpt2"
     TOKENIZER_NAME = "vngrs-ai/Kumru-2B"
     DEVICE = "cuda"

@@ -8,9 +8,10 @@ data/
 output/
 logs/
 
-# Model checkpoints or temporary scripts
-qwen3/
+
 *.bin
+*.pt 
+*.txt
 
 # OS-specific
 .DS_Store

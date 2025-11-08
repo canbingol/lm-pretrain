@@ -7,9 +7,7 @@ from utils import (
     load_yaml,
     merge_args_with_yaml
 )
-from models.deepseekV2 import Deepseek, DeepseekConfig
 from models.qwen3 import Qwen3,Qwen3Config
-from models.gemma2 import Gemma2, GemmaConfig
 from models.llama2 import LLaMA2, LlamaConfig
 from models.gpt2 import GPTConfig, GPTModel
 
@@ -41,7 +39,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--config", type=str, help="Path to YAML config file")
-    parser.add_argument('--model', type=str, choices=["qwen3","deepseek","gemma2","llama2","gpt2"])
+    parser.add_argument('--model', type=str, choices=["qwen3","llama2","gpt2"])
     parser.add_argument('--checkpoint', type=str)
     parser.add_argument('--tokenizer-path', type=str)
     parser.add_argument('--prompt', type=str)
@@ -56,8 +54,6 @@ def main():
 
     model_map = {
         "qwen3": (Qwen3Config, Qwen3),
-        "deepseek":(DeepseekConfig, Deepseek),
-        "gemma2":(GemmaConfig,Gemma2),
         "llama2":(LlamaConfig,LLaMA2),
         "gpt2": (GPTConfig, GPTModel)
 

@@ -1,3 +1,7 @@
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.optim.lr_scheduler")
+
+
 import time, os, sys
 from dataclasses import astuple
 from tqdm import tqdm
@@ -16,10 +20,9 @@ from utils import (
 )
 
 def calcc(model, input_batch, target_batch, device):
-    # Cast & move to device
-    input_batch = input_batch.long().to(device, non_blocking=True)
-    target_batch = target_batch.long().to(device, non_blocking=True)
 
+    input_batch = input_batch.to(device)
+    target_batch = target_batch.to(device)
     # Forward pass
     logits = model(input_batch)
     del input_batch
@@ -124,11 +127,22 @@ def train_model(train_state: TrainState,data_loaders: DataLoaders, training_conf
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}") if gpu_id == 0 else train_loader
         for input_batch, target_batch in pbar:
+
+            input_batch = input_batch.to(device)
+            target_batch = target_batch.to(device)
+
+            if (input_batch < 0).any() or (input_batch > 50176).any():
+                raise ValueError("input_batch'te Geçersiz değer!")
+            if (target_batch < 0).any() or (target_batch > 50176).any():
+                raise ValueError("target_batch'te Geçersiz değer!")
+            
             torch.autograd.set_detect_anomaly(True)
             loss = calcc_loss_batch(model,input_batch,target_batch,device)
 
             if loss is None:
+                logger.warning(f"at step {global_step} train loss is None")
                 continue
+                
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -139,7 +153,7 @@ def train_model(train_state: TrainState,data_loaders: DataLoaders, training_conf
 
             if gpu_id == 0:
                 pbar.set_postfix({"train loss":f"{loss.item():.4f}"})
-                with open(train_loss_file,"a")as f:
+                with open(train_loss_file, "a") as f:
                     f.write(f"{global_step}, {loss.item()}\n")
 
             if  (global_step > 0 and global_step % eval_steps == 0):
@@ -156,7 +170,7 @@ def train_model(train_state: TrainState,data_loaders: DataLoaders, training_conf
                     sys.stdout.write(" " * 50 + "\r")
                     sys.stdout.flush()
                     logger.info(f"Ep {epoch+1} (Step {global_step:06d}): "
-                        f"Train loss {loss:.3f} Val loss {val_loss:.3f}, Perplexity {ppl}")
+                        f"Train loss {loss:.3f} Val loss {val_loss:.3f}, Perplexity {ppl:.3f}")
 
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
@@ -168,7 +182,7 @@ def train_model(train_state: TrainState,data_loaders: DataLoaders, training_conf
                     "scheduler_state_dict": scheduler.state_dict(),
                     "train_loss": loss,
                     "val_loss": val_loss
-                },f"{output_path}/{model.module.name}_best_model.pt")
+                },f"{output_path}/{model.module.name}_{global_step}.step_best_model.pt")
 
         clear_gpu_memory()
 

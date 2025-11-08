@@ -1,7 +1,7 @@
 # -----------------------------
 # Training configuration
 # -----------------------------
-model: "gpt2"
+model: "qwen3"
 world_size: 1
 force: False
 train-tokenizer: False
@@ -12,7 +12,7 @@ max_new_tokens: 64
 prompt: "merhaba"
 checkpoint: "./output/gpt2/GPT2_best_model_data500k_loss4.3.pt"
 pre_training_hf_data: "canbingol/vngrs-web-corpus-500k"
-it_hf_data: "merve/turkish_instructions"
+it_hf_data: "canbingol/turkish_instructions"
 text_column_name: "text"
 saved_token_path: "./data/pretrain/default_tokenizer"
 hf_tokenizer: "vngrs-ai/Kumru-2B"
