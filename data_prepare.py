@@ -148,13 +148,13 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
         return 0
 
     class ITDataset(Dataset):
-        def __init__(self, mode, data, tokenizer, max_seq_len, pad_token: int= 0, gpu_id=gpu_id):
+        def __init__(self, mode, data, tokenizer, max_seq_len, pad_token: int= 0, eos_token:int= 3, gpu_id=gpu_id):
             super().__init__()
             assistant_token_ids = tokenizer.encode("<|start_header_id|>assistant<|end_header_id|>", add_special_tokens=False)
             self.input_ids, self.target_ids = [], []
             bar = tqdm(data, total=len(data), desc=f"iterating IT data for {mode}") if gpu_id == 0 else data
             for item in bar:
-                prompt = format_it_data(item["talimat"], item[" giriş"], item[" çıktı"])
+                prompt = format_it_data(item["question"], item["input"], item["answer"])
                 tokens = tokenizer.encode(prompt,  add_special_tokens=True)
                 tokens += [pad_token] * (max_seq_len - len(tokens))
                 tokens = tokens[:max_seq_len]
@@ -165,7 +165,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
                 input_ = torch.tensor(input_)
                 target_ = torch.tensor(target_)
 
-                start_idx = find_sub(target_, assistant_token_ids)
+                start_idx = find_sub(target_, assistant_token_ids) + 3
                 mask_start = max(0, start_idx-1)
                 target_[:mask_start] = 0
                 self.input_ids.append(input_)
