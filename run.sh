@@ -24,9 +24,12 @@ case "$type" in
     inference)
         type="inference"
         ;;
+    rlhf)
+        type="rlhf"
+        ;;
     *)
         echo "Invalid type: $type"
-        echo "Expected one of: pretrain, pre_train, pre-train, instruction_tuning, instruction-tuning, it, inference"
+        echo "Expected one of: pretrain, pre_train, pre-train, instruction_tuning, instruction-tuning, it, inference, rlhf"
         echo "Example usage: sh run.sh pre-train"
         exit 1
         ;;
@@ -43,6 +46,12 @@ elif [ "$type" = "pre-train" ] || [ "$type" = "instruction-tuning" ]; then
     WORLD_SIZE=$(grep -E "^[[:space:]]*world_size:" "$TRAIN_CONFIG" | awk '{print $2}')
     echo "World size: $WORLD_SIZE"
     torchrun --standalone --nproc_per_node="$WORLD_SIZE" main.py --config "$TRAIN_CONFIG" --training-type "$type"
+
+elif [ "$type" = "rlhf" ]; then
+    echo "[INFO] Training mode ($type)"
+    WORLD_SIZE=$(grep -E "^[[:space:]]*world_size:" "$TRAIN_CONFIG" | awk '{print $2}')
+    echo "World size: $WORLD_SIZE"
+    torchrun --standalone --nproc_per_node="$WORLD_SIZE" rlhf_trainer.py 
 
 else
     echo "Error: Unknown type '$type'."

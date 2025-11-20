@@ -16,3 +16,6 @@ logs/
 # OS-specific
 .DS_Store
 Thumbs.db
+
+# Non-complate scripts
+train/rlhf_trainer.py

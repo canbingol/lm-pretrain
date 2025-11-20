@@ -10,14 +10,14 @@ class Qwen3Config:
     # Model architecture
     config_name = "QwenConfig"
     embed_dim: int = 1024
-    n_heads: int = 128
-    n_layers: int = 12
+    n_heads: int = 16
+    n_layers: int = 10
     d_ff: int = 512 * 4
     batch_size: int = 29
     max_steps: int = 200_000
 
     # Qwen3-like parameters
-    n_kv_heads: int = 64 # For Grouped-Query Attention
+    n_kv_heads: int = 8 # For Grouped-Query Attention
     sliding_window: int = 1024  # Set a large default, effectively disabling it unless specified
     attention_bias: bool = False  # Qwen3 often sets this to False
     rms_norm_eps: float = 1e-06  # Epsilon for RMSNorm
@@ -30,7 +30,7 @@ class Qwen3Config:
     # Data parameters
     max_seq_len: int = 512
     max_tokens: int = 50000000
-    vocab_size = 32768
+    vocab_size = 50176
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
 

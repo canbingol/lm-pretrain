@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 
 # local modules - top-level logic
 from inference import generate
-from train import trainer
+from train.trainer import Trainer
 from data_prepare import (
     prepare_pretrain_data,
     create_tokens_file,
@@ -144,12 +144,12 @@ def main():
         n_params = sum(p.numel() for p in model.parameters())
         n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    if FORCE:
-        OUTPUT_PATH = f"output/{MODEL}/{TRAINING_TYPE}/{n_params/1e6:.2f}M_force"
-    else:
-        OUTPUT_PATH = f"output/{MODEL}_{TRAINING_TYPE}_{n_params/1e6:.2f}M"
+        if FORCE:
+            OUTPUT_PATH = f"output/{MODEL}/{TRAINING_TYPE}/{n_params/1e6:.2f}M_force"
+        else:
+            OUTPUT_PATH = f"output/{MODEL}_{TRAINING_TYPE}_{n_params/1e6:.2f}M"
 
-    OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
+        OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
 
     os.makedirs(OUTPUT_PATH, exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(HF_TOKENIZER)
@@ -229,7 +229,8 @@ def main():
 
     # Start training
     try:
-        trainer(train_state,data_loaders,train_config, logger)
+        trainer = Trainer(train_state,data_loaders,train_config, logger)
+        trainer.train()
 
     except Exception as e:
         logger.exception(f"Unhandled exception: {e}")
