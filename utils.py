@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import torch
 from torch.utils.data import DataLoader
-
+from transformers import AutoModel
 @dataclass(frozen=True)
 class TrainConfig:
     num_epochs: int
@@ -27,6 +27,7 @@ class DataLoaders:
 class TrainState:
     model: torch.nn.Module
     checkpoint_path: str
+    tokenizer: AutoModel
 
 def load_model(model,inference,checkpoint_path, device,optimizer=None,scheduler=None):
     checkpoint = torch.load(checkpoint_path,map_location=device)

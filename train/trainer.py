@@ -44,12 +44,14 @@ class Trainer:
     
     def _train(self,train_state: TrainState, data_loaders: DataLoaders, training_config: TrainConfig, logger):
         start_time = time.time()
-        model,checkpoint_path  = astuple(train_state)
-        train_loader,val_loader = astuple(data_loaders)
-        num_epochs,training_steps,eval_steps,eval_sample,learning_rate,device,output_path,force = astuple(training_config)
+        model, checkpoint_path, tokenizer  = astuple(train_state)
+        train_loader, val_loader = astuple(data_loaders)
+        num_epochs, training_steps, eval_steps, eval_sample, learning_rate, device, output_path, force = astuple(training_config)
 
         train_loss_file = f"{output_path}/train_loss.txt"
         val_loss_file = f"{output_path}/validation_loss.txt"
+        generated_text_file = f"{output_path}/validation_loss.txt"
+
 
         gpu_id = device
         model = DDP(model,device_ids=[gpu_id])
@@ -113,9 +115,12 @@ class Trainer:
                     if gpu_id == 0:
                         print("Calculating loss...", end="", flush=True)
 
-                        val_loss = evaluate_model(
-                            model,val_loader,device,eval_sample, val_loss_file
+                        val_loss, generated_text = evaluate_model(
+                            model, tokenizer, val_loader, device, eval_sample, val_loss_file
                         )
+                        print(f"Model generated text: {generated_text}")
+                        with open(generated_text_file, "a") as f:
+                            f.write(f"{global_step}, {generated_text}\n")
                         val_losses.append(val_loss)
                         ppl = math.exp(val_loss)
                         track_tokens_seen.append(token_seen)

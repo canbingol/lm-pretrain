@@ -1,245 +1,410 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
+import os
 from dataclasses import dataclass
-import numpy as np
+
+import torch
+from torch import nn
+import torch.nn.functional as F
+
+from flash_attn import flash_attn_func
+
 
 @dataclass
 class Qwen3Config:
-    # Model architecture
-    config_name = "QwenConfig"
-    embed_dim: int = 1024
-    n_heads: int = 16
-    n_layers: int = 10
-    d_ff: int = 512 * 4
-    batch_size: int = 29
-    max_steps: int = 200_000
-
-    # Qwen3-like parameters
-    n_kv_heads: int = 8 # For Grouped-Query Attention
-    sliding_window: int = 1024  # Set a large default, effectively disabling it unless specified
-    attention_bias: bool = False  # Qwen3 often sets this to False
-    rms_norm_eps: float = 1e-06  # Epsilon for RMSNorm
-    qk_norm = True
-
-    # Training parameters
-    gradient_accumulation_steps: int = 4
-    muon_lr: float = 0.01
-
-    # Data parameters
-    max_seq_len: int = 512
-    max_tokens: int = 50000000
-    vocab_size = 50176
-    
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Regularization
-    weight_decay: float = 0.1
-    dropout: float = 0.0
-    grad_clip: float = 1.0
+    config_name: str = "Qwen3"
+    attention_bias: bool = False
+    attention_dropout: float = 0.0
+    bos_token_id: int = 151643
+    eos_token_id: int = 151645
+    head_dim: int = 128
+    hidden_act: str = "silu"
+    hidden_size: int = 512
+    initializer_range: float = 0.02
+    intermediate_size: int = 3072
+    max_position_embeddings: int = 40960
+    max_window_layers: int = 28
+    model_type: str = "qwen3"
+    num_attention_heads: int = 16
+    num_hidden_layers: int = 1
+    num_key_value_heads: int = 8
+    rms_norm_eps: float = 1e-6
+    rope_scaling: None = None
+    rope_theta: int = 1000000
+    sliding_window: None = None
+    tie_word_embeddings: bool = True
+    torch_dtype: str = "bfloat16"
+    use_cache: bool = True
+    use_sliding_window: bool = False
+    vocab_size: int = 50176
 
 
-    data_dtype = np.uint16
-    # Technical
-    use_amp: bool = True
-    drop_last = True
-    shuffle = False
-    def __post_init__(self):
-        self.d_k = self.embed_dim // self.n_heads
-        assert self.embed_dim % self.n_heads == 0, "embed_dim must be divisible by n_heads"
-        assert self.n_heads % self.n_kv_heads == 0, "n_heads must be divisible by n_kv_heads"
-        self.n_kv_groups = self.n_heads // self.n_kv_heads
+class SiluAndMul(nn.Module):
 
-
-class SwiGLUFeedForward(nn.Module):
-    def __init__(self, embed_dim: int, d_ff: int, dropout: float = 0.1):
+    def __init__(self):
         super().__init__()
-        self.gate_proj = nn.Linear(embed_dim, d_ff, bias=False)
-        self.down_proj = nn.Linear(d_ff, embed_dim, bias=False)
-        self.up_proj = nn.Linear(embed_dim, d_ff, bias=False)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        activated_x = F.silu(self.gate_proj(x)) * self.up_proj(x)
-        return self.down_proj(self.dropout(activated_x))
-def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
-
-    if n_rep == 1:
-        return hidden_states
-
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
-
-    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
-
-class Rotary(nn.Module):
-    """
-    Rotary Positional Embedding (RoPE)
-    - precompute_cis: prepares the cos/sin lookup tables
-    - apply_rope: applies RoPE transformation to the input tensor
-    """
-
-    def __init__(self, head_dim: int, max_seq_len: int, base: float = 10000.0):
-        super().__init__()
-        assert head_dim % 2 == 0, "head_dim must be even"
-        self.head_dim = head_dim
-        self.max_seq_len = max_seq_len
-        self.base = base
-
-        cos, sin = self.precompute_cis(head_dim, max_seq_len, base)
-        self.register_buffer("cos", cos, persistent=False)
-        self.register_buffer("sin", sin, persistent=False)
-
-    def precompute_cis(self, head_dim: int, max_seq_len: int, base: float):
-        """cos/sin tablolarını hesapla"""
-        half = head_dim // 2
-        inv_freq = 1.0 / (base ** (torch.arange(0, half, dtype=torch.float32) / half))
-        t = torch.arange(max_seq_len, dtype=torch.float32)
-        freqs = torch.outer(t, inv_freq)  # (S, half)
-        return freqs.cos(), freqs.sin()
-
-    def apply_rope(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
-        """x üzerine RoPE uygula"""
-        D = x.size(-1); half = D // 2; S = x.size(-2)
-        if x.dim() == 4:   # (B,H,S,D)
-            cos = cos[:S, :half].view(1, 1, S, half)
-            sin = sin[:S, :half].view(1, 1, S, half)
-        elif x.dim() == 3: # (B,S,D)
-            cos = cos[:S, :half].view(1, S, half)
-            sin = sin[:S, :half].view(1, S, half)
-        else:
-            raise ValueError("x must be (B,H,S,D) or (B,S,D)")
-
-        x_f32 = x.to(torch.float32)
-        xe, xo = x_f32[..., ::2], x_f32[..., 1::2]
-        ye = xe * cos - xo * sin
-        yo = xe * sin + xo * cos
-        out = torch.empty_like(x_f32)
-        out[..., ::2], out[..., 1::2] = ye, yo
-        return out.to(x.dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.apply_rope(x, self.cos, self.sin)
+        x, y = x.chunk(2, -1)
+        return F.silu(x) * y
 
-class GroupedQueryAttention(nn.Module):
-    def __init__(self, config):
+
+class Attention(nn.Module):
+    def __init__(
+        self,
+        scale: float,
+        dropout_p: float = 0.0, 
+    ):
         super().__init__()
-        self.embed_dim = config.embed_dim
-        self.n_heads = config.n_heads
-        self.n_kv_heads = config.n_kv_heads
-        self.n_kv_groups = config.n_kv_groups
-        self.d_k = config.d_k
-        self.qk_norm = config.qk_norm
+        self.scale = scale
+        self.dropout_p = dropout_p
 
-        # Separate linear layers for Q, K, V
-        self.q_proj = nn.Linear(self.embed_dim, self.n_heads * self.d_k, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.embed_dim, self.n_kv_heads * self.d_k, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.embed_dim, self.n_kv_heads * self.d_k, bias=config.attention_bias)
-        self.w_o = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+        o = flash_attn_func(
+            q, k, v,
+            dropout_p=self.dropout_p if self.training else 0.0, 
+            softmax_scale=self.scale,
+            causal=True 
+        )
+        return o
+    
 
-        # QK-Normalization layers
-        self.q_norm = nn.RMSNorm(self.d_k, eps=config.rms_norm_eps)
-        self.k_norm = nn.RMSNorm(self.d_k, eps=config.rms_norm_eps)
+class Qwen3Attention(nn.Module):
+    def __init__(self, config: Qwen3Config):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = config.head_dim
+        self.num_kv_heads = config.num_key_value_heads
 
-        self.rotary = Rotary(self.d_k, config.max_seq_len)
-        self.dropout = config.dropout
+        self.q_size = self.num_heads * self.head_dim
+        self.kv_size = self.num_kv_heads * self.head_dim
 
-    def forward(self, x):
-        batch_size, seq_len = x.size(0), x.size(1)
+        total_out_dim = self.q_size + self.kv_size * 2
 
-        # 1. Project Q, K, V separately
-        q = self.q_proj(x)
-        k = self.k_proj(x)
-        v = self.v_proj(x)
+        self.qkv_proj = nn.Linear(self.hidden_size, total_out_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim , self.hidden_size, bias=False)
 
-        # 2. Reshape into heads
-        q = q.view(batch_size, seq_len, self.n_heads, self.d_k)
-        k = k.view(batch_size, seq_len, self.n_kv_heads, self.d_k)
-        v = v.view(batch_size, seq_len, self.n_kv_heads, self.d_k)
-
-        if self.qk_norm:
-            # 3. Apply QK-Norm
-            q = self.q_norm(q)
-            k = self.k_norm(k)
-
-
-        # 4. Apply RoPE
-        # Transpose to (batch, seq_len, n_heads, d_k) -> (batch, n_heads, seq_len, d_k) for rotary
-        q = self.rotary(q.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
-        k = self.rotary(k.permute(0, 2, 1, 3)).permute(0, 2, 1, 3)
-
-        # Transpose for attention: (batch, seq_len, n_heads, d_k) -> (batch, n_heads, seq_len, d_k)
-        Q = q.transpose(1, 2)
-        K = k.transpose(1, 2)
-        V = v.transpose(1, 2)
-
-        # 5. Repeat K and V heads for GQA
-        K = repeat_kv(K, self.n_kv_groups)
-        V = repeat_kv(V, self.n_kv_groups)
-
-        # 6. Scaled Dot-Product Attention
-        attn_output = F.scaled_dot_product_attention(
-            Q, K, V, is_causal=True, dropout_p=self.dropout if self.training else 0.0
+        self.rotary_emb = RotaryEmbedding(
+                    self.head_dim, 
+                    rotary_dim=self.head_dim, 
+                    max_position_embeddings=config.max_position_embeddings,
+                    base=config.rope_theta
+                )
+        
+        self.attn = Attention(
+            scale=self.head_dim**-0.5
         )
 
-        # 7. Reshape and final projection
-        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.embed_dim)
-        return self.w_o(attn_output)
-    
-class Qwen3Decoder(nn.Module):
-    def __init__(self, config):  # Pass the entire config object
+        self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+        self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+
+
+    def forward(self, positions,
+                hidden_states,
+                past_key_value:tuple=None,
+                use_cache:bool=False):
+            
+            qkv = self.qkv_proj(hidden_states)
+            
+            # Split Q, K, V
+            q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+            
+            # Reshape: [Batch, SeqLen, NumHeads, HeadDim]
+            q = q.view(q.shape[0], q.shape[1], self.num_heads, self.head_dim)
+            k = k.view(k.shape[0], k.shape[1], self.num_kv_heads, self.head_dim)
+            v = v.view(v.shape[0], v.shape[1], self.num_kv_heads, self.head_dim)
+            
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+            
+            q, k = self.rotary_emb(positions, q, k)
+            
+            current_key_value = None
+            if use_cache:
+
+                if past_key_value is not None:
+                    past_k, past_v = past_key_value
+                    k = torch.cat((past_k, k), dim=1)
+                    v = torch.cat((past_v, v), dim=1)
+
+                current_key_value = (k, v)
+
+            attn_output = self.attn(q, k, v)
+            
+            attn_output = attn_output.reshape(attn_output.shape[0], attn_output.shape[1], -1)
+            output = self.o_proj(attn_output)
+            
+            return output, current_key_value
+
+def apply_rotary_emb(
+    x: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+) -> torch.Tensor:
+    x1, x2 = torch.chunk(x.float(), 2, dim=-1)
+    y1 = x1 * cos - x2 * sin
+    y2 = x2 * cos + x1 * sin
+    return torch.cat((y1, y2), dim=-1).to(x.dtype)
+
+
+class RotaryEmbedding(nn.Module):
+
+    def __init__(
+        self,
+        head_size: int,
+        rotary_dim: int,
+        max_position_embeddings: int,
+        base: float,
+    ) -> None:
         super().__init__()
-        self.attention = GroupedQueryAttention(config)
-        self.feed_forward = SwiGLUFeedForward(config.embed_dim, config.d_ff, config.dropout)
-        self.norm1 = nn.RMSNorm(config.embed_dim, eps=config.rms_norm_eps)
-        self.norm2 = nn.RMSNorm(config.embed_dim, eps=config.rms_norm_eps)
-        self.dropout = nn.Dropout(config.dropout)
+        self.head_size = head_size
+        assert rotary_dim == head_size
+        inv_freq = 1.0 / (base**(torch.arange(0, rotary_dim, 2, dtype=torch.float) / rotary_dim))
+        t = torch.arange(max_position_embeddings, dtype=torch.float)
+        freqs = torch.einsum("i,j -> ij", t, inv_freq)
+        cos = freqs.cos()
+        sin = freqs.sin()
+        cache = torch.cat((cos, sin), dim=-1).unsqueeze_(1)
+        self.register_buffer("cos_sin_cache", cache, persistent=False)
+
+    def forward(
+        self,
+        positions: torch.Tensor,
+        query: torch.Tensor,
+        key: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        cos_sin = self.cos_sin_cache[positions]
+        cos, sin = cos_sin.chunk(2, dim=-1)
+        query = apply_rotary_emb(query, cos, sin)
+        key = apply_rotary_emb(key, cos, sin)
+        return query, key
+
+
+def get_rope(
+    head_size: int,
+    rotary_dim: int,
+    max_position: int,
+    base: float,
+    rope_scaling: dict | None = None,
+):
+    assert rope_scaling is None
+    rotary_emb = RotaryEmbedding(head_size, rotary_dim, max_position, base)
+    return rotary_emb
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
-        attn_out = self.attention(self.norm1(x))
-        x = x + self.dropout(attn_out)
-        ff_out = self.feed_forward(self.norm2(x))
-        x = x + self.dropout(ff_out)
+
+        var = x.pow(2).mean(dim=-1, keepdim=True)
+        norm_x = x * torch.rsqrt(var + self.eps)
+        out = norm_x * self.weight
+        return norm_x * self.weight
+
+
+class Qwen3MLP(nn.Module):
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        hidden_act: str,
+    ) -> None:
+        super().__init__()
+        self.gate_up_proj = nn.Linear(
+            hidden_size,
+            intermediate_size * 2,
+            bias=False,
+        )
+        self.down_proj = nn.Linear(
+            intermediate_size,
+            hidden_size,
+            bias=False,
+        )
+        assert hidden_act == "silu"
+        self.act_fn = SiluAndMul()
+
+    def forward(self, x):
+        gate_up = self.gate_up_proj(x)
+        x = self.act_fn(gate_up)
+        x = self.down_proj(x)
         return x
 
 
-class Qwen3(nn.Module):
-    def __init__(self, config):
+class Qwen3DecoderLayer(nn.Module):
+
+    def __init__(
+        self,
+        config: Qwen3Config,
+    ) -> None:
+        super().__init__()
+        self.self_attn = Qwen3Attention(config=config)
+        self.mlp = Qwen3MLP(
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            hidden_act=config.hidden_act,
+        )
+        self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+    def forward(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        past_kv_cache: tuple =None,
+        use_cache:bool =False
+
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states, present_key_value = self.self_attn(positions, hidden_states, past_kv_cache, use_cache)
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        return hidden_states, present_key_value
+
+
+class Qwen3Model(nn.Module):
+
+    def __init__(
+        self,
+        config: Qwen3Config,
+    ) -> None:
+        super().__init__()
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.layers = nn.ModuleList([Qwen3DecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        past_key_values: tuple= None,
+        use_cache:bool= False
+    ) -> torch.Tensor:
+        
+        hidden_states = self.embed_tokens(input_ids)
+        
+        next_decoder_cache = () if use_cache else None
+        
+        for idx, layer in enumerate(self.layers):
+            past_kv_cache =  past_key_values[idx] if past_key_values is not None else None 
+
+            assert hidden_states.dim() == 3,f"hidden_states dim has to be 3 but {hidden_states.dim()}"
+            
+            hidden_states, layer_kv  = layer(
+                positions=positions, 
+                hidden_states=hidden_states, 
+                past_kv_cache=past_kv_cache, 
+                use_cache=use_cache
+                )
+            
+            if use_cache:
+                next_decoder_cache += (layer_kv, )
+
+            hidden_states = self.norm(hidden_states)
+
+        if use_cache:
+            return hidden_states, next_decoder_cache
+        
+        return hidden_states
+
+
+class Qwen3CausalLM(nn.Module):
+    
+    def __init__(self,config: Qwen3Config):
         super().__init__()
         self.config = config
+        self.base = Qwen3Model(config=config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
 
-        self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
-        self.position_dropout = nn.Dropout(config.dropout)
+    def get_input_embeddings(self):
+        return self.base.embed_tokens
+    
+    def forward(
+        self, 
+        input_ids: torch.Tensor, 
+        positions: torch.Tensor = None,
+        past_key_values: torch.Tensor=None,
+        use_cache:bool=False
+    ):
+        batch_size, seq_len = input_ids.shape
+        hidden_states = None
+        if not use_cache:
+            positions = torch.arange(seq_len,  device=input_ids.device).unsqueeze(0).repeat(batch_size, 1)
 
-        self.transformer_blocks = nn.ModuleList([
-            Qwen3Decoder(config) for _ in range(config.n_layers)
-        ])
+        outputs = self.base(input_ids=input_ids, positions=positions, past_key_values=past_key_values, use_cache=use_cache)
 
-        self.norm = nn.RMSNorm(config.embed_dim, eps=config.rms_norm_eps)
-        self.output_dropout = nn.Dropout(config.dropout)
+        if use_cache:
+            hidden_states, next_cache = outputs
+        else:
+            hidden_states = outputs
+            next_cache = None
 
-        self.lm_head = nn.Linear(config.embed_dim, config.vocab_size, bias=False)
-        self.lm_head.weight = self.token_embedding.weight
-
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    def forward(self, x):
-        x = self.token_embedding(x) * math.sqrt(self.config.embed_dim)
-        x = self.position_dropout(x)
-
-        for block in self.transformer_blocks:
-            x = block(x)
-
-        x = self.norm(x)
-        x = self.output_dropout(x)
-        logits = self.lm_head(x)
+        logits = self.lm_head(hidden_states)
+        if use_cache:
+            return logits, next_cache
+            
         return logits
+    
+    @torch.no_grad()
+    def generate(
+        self, 
+        input_ids: torch.Tensor, 
+        max_new_tokens: int = 20, 
+        temperature: float = 1.0, 
+        top_k: int = None,
+        use_cache = True
+
+    ):
+        self.eval()
+
+        past_key_values = None
+        generated_ids = input_ids
+
+        for _ in range(max_new_tokens):
+            seq_len = input_ids.size(1)
+
+            # Prefill
+            if past_key_values is None:
+                positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
+
+            # Decode
+            else:
+                current_pos = generated_ids.shape[1] - 1
+                positions = torch.tensor([[current_pos]], device=input_ids.device)
+            
+            model_input = input_ids if past_key_values is None else input_ids[:, -1:]
+
+            # Forward pass
+            outputs = self.base(input_ids=model_input, 
+                          positions=positions, 
+                          past_key_values=past_key_values,
+                          use_cache=use_cache)
+
+            hidden_states, past_key_values = outputs # Update cache
+
+            logits = self.lm_head(hidden_states)
+
+            logits = logits[:,-1,:]
+
+            # Temperature
+            if temperature:
+                logits = logits / temperature
+
+            # Top-K
+            if top_k:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("Inf")
+
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+            input_ids = next_token
+            
+            if next_token.item() ==  self.config.eos_token_id:
+                break
+
+        self.train()
+        return generated_ids
+    

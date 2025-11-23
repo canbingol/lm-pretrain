@@ -57,11 +57,17 @@ def calc_loader_loss(model, data_loader, device, val_loss_file, num_batch=None, 
         clear_gpu_memory()
     return total_loss / num_batch
 
-def evaluate_model(model, val_loader, device, eval_iter, val_loss_file):
+def evaluate_model(model, tokenizer, val_loader, device, eval_iter, val_loss_file):
     model.eval()
     with torch.no_grad():
 
         val_loss = calc_loader_loss(model, val_loader, device, val_loss_file, num_batch=eval_iter, type_train=False)
+        
+        prompt = tokenizer.encode("Selam kimsin?", return_tensors="pt")
+        prompt = prompt.to(device)
 
+        generated_tokens = model.module.generate(prompt)
+        generated_text = tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
+        
     model.train()
-    return val_loss
+    return val_loss, generated_text

@@ -29,10 +29,7 @@ from utils import (
 )
 
 # model registry - separated by domain
-from models.qwen3 import Qwen3, Qwen3Config
-from models.llama2 import LLaMA2, LlamaConfig
-from models.gpt2 import GPTConfig, GPTModel
-
+from models.qwen3 import Qwen3CausalLM, Qwen3Config
 
 # Seed info
 torch.manual_seed(42)
@@ -79,6 +76,7 @@ def main():
         yaml_cfg = load_yaml(args.config)
         args = merge_args_with_yaml(args, yaml_cfg)
 
+
     WORLD_SIZE = int(args.world_size)
     TRAINING_TYPE = args.training_type
     MODEL = str(args.model)
@@ -118,15 +116,20 @@ def main():
 
 
     model_map = {
-        "qwen3": (Qwen3Config, Qwen3),
-        "llama2":(LlamaConfig,LLaMA2),
-        "gpt2": (GPTConfig, GPTModel)
-
+        "qwen3": (Qwen3Config, Qwen3CausalLM)
     }
 
-    # Initialize model with cuda device
+    dtype_map = {
+    "torch.float32": torch.float32,
+    "torch.float16": torch.float16,
+    "torch.bfloat16": torch.bfloat16,
+    "float32": torch.float32,  
+    "bfloat16": torch.bfloat16
+}
+
     ConfigClass, ModelClass = model_map[MODEL]
     config = ConfigClass()
+    actual_dtype = dtype_map.get(config.torch_dtype, torch.float32)
 
     config.vocab_size = VOCAB_SIZE
     config.batch_size = BATCH_SIZE
@@ -139,6 +142,7 @@ def main():
     logger = setup_logger(rank=gpu_id, filename=log_name)
 
     model = ModelClass(config).to(DEVICE)
+    model = model.to(actual_dtype)   
 
     if gpu_id == 0:
         n_params = sum(p.numel() for p in model.parameters())
@@ -163,6 +167,7 @@ def main():
         logger.info(f"GPU name: {torch.cuda.get_device_name(gpu_id)}")
         logger.info(f"GPU memory: {torch.cuda.get_device_properties(gpu_id).total_memory / 1e9:.2f} GB")
         logger.info(f"Model: {MODEL}")
+        logger.info(f"Dtype: {actual_dtype}")
         logger.info(f"Config name: {config.config_name}")
         logger.info(f"Vocab size: {VOCAB_SIZE}")
         logger.info(f"Trainable params: {n_trainable/1e6:.2f}M / Total: {n_params/1e6:.2f}M")
@@ -213,7 +218,7 @@ def main():
     train_state = TrainState(
         model=model,
         checkpoint_path=checkpoint_path,
-
+        tokenizer=tokenizer
     )
 
     train_config = TrainConfig(

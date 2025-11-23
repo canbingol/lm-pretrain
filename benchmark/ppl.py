@@ -3,9 +3,7 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 
-from models.qwen3 import Qwen3,Qwen3Config
-from models.llama2 import LLaMA2, LlamaConfig
-from models.gpt2 import GPTConfig, GPTModel
+from models.qwen3 import Qwen3CausalLM, Qwen3Config
 
 from data_prepare import prepare_pretrain_data
 
@@ -17,9 +15,7 @@ class PPLBenchmark:
         self.device = device
 
         model_map = {
-        "qwen3": (Qwen3Config, Qwen3),
-        "llama2":(LlamaConfig,LLaMA2),
-        "gpt2": (GPTConfig, GPTModel)
+        "qwen3": (Qwen3Config, Qwen3CausalLM)
 
     }
         

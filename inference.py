@@ -1,3 +1,7 @@
+"""
+TODO: Refactor this file to implement generation using model.generate.
+"""
+
 
 import argparse, sys
 import torch
@@ -7,9 +11,8 @@ from utils import (
     load_yaml,
     merge_args_with_yaml
 )
-from models.qwen3 import Qwen3,Qwen3Config
-from models.llama2 import LLaMA2, LlamaConfig
-from models.gpt2 import GPTConfig, GPTModel
+from models.qwen3 import Qwen3CausalLM, Qwen3Config
+
 
 @torch.no_grad()
 def generate(model, tokenizer, prompt, device="cuda", max_new_tokens=64,temprature=0.67,top_k=100 ):
@@ -53,9 +56,7 @@ def main():
     prompt = args.prompt
 
     model_map = {
-        "qwen3": (Qwen3Config, Qwen3),
-        "llama2":(LlamaConfig,LLaMA2),
-        "gpt2": (GPTConfig, GPTModel)
+        "qwen3": (Qwen3Config, Qwen3CausalLM)
 
     }
     snapshot = torch.load(cp,map_location="cuda")
