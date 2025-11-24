@@ -257,10 +257,19 @@ class Qwen3DecoderLayer(nn.Module):
         use_cache:bool =False
 
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        
+        residual = hidden_states
+
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states, present_key_value = self.self_attn(positions, hidden_states, past_kv_cache, use_cache)
+        attn_output, present_key_value = self.self_attn(positions, hidden_states, past_kv_cache, use_cache)
+
+        hidden_states = residual + attn_output
+
+        residual = hidden_states
+        
         hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + self.mlp(hidden_states)
+        
         return hidden_states, present_key_value
 
 
