@@ -1,7 +1,7 @@
 # -----------------------------
 # Training configuration
 # -----------------------------
-model: "qwen3"
+model: "decoder"
 world_size: 1
 force: False
 train-tokenizer: False

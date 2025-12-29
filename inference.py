@@ -11,7 +11,7 @@ from utils import (
     load_yaml,
     merge_args_with_yaml
 )
-from models.qwen3 import Qwen3CausalLM, Qwen3Config
+from models.decoder_model import DecoderCausalLM, ModelConfig
 
 
 @torch.no_grad()

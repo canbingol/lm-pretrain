@@ -5,12 +5,14 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from flash_attn import flash_attn_func
-
+try:
+    from flash_attn import flash_attn_func
+except Exception:
+    flash_attn_func = None
 
 @dataclass
-class Qwen3Config:
-    config_name: str = "Qwen3"
+class ModelConfig:
+    config_name: str = "decoder_only"
     attention_bias: bool = False
     attention_dropout: float = 0.0
     bos_token_id: int = 151643
@@ -20,9 +22,9 @@ class Qwen3Config:
     hidden_size: int = 512
     initializer_range: float = 0.02
     intermediate_size: int = 3072
-    max_position_embeddings: int = 40960
+    max_position_embeddings: int = 40960    
     max_window_layers: int = 28
-    model_type: str = "qwen3"
+    model_type: str = "decoder_only"
     num_attention_heads: int = 16
     num_hidden_layers: int = 1
     num_key_value_heads: int = 8
@@ -35,45 +37,100 @@ class Qwen3Config:
     use_cache: bool = True
     use_sliding_window: bool = False
     vocab_size: int = 50176
-
-
-class SiluAndMul(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x, y = x.chunk(2, -1)
-        return F.silu(x) * y
-
+    attn_type = "flash_attn"
 
 class Attention(nn.Module):
     def __init__(
         self,
         scale: float,
+        attn_type: str,
+        is_causal: bool,
         dropout_p: float = 0.0, 
     ):
         super().__init__()
         self.scale = scale
         self.dropout_p = dropout_p
+        self.attn_type = attn_type
+        self.is_causal = is_causal
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
-        o = flash_attn_func(
-            q, k, v,
-            dropout_p=self.dropout_p if self.training else 0.0, 
-            softmax_scale=self.scale,
-            causal=True 
-        )
-        return o
-    
+    def _eager_attn(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal_mask: torch.Tensor, dropout_p: float):
+        
+        scores = q @ k.transpose(-2, -1) * self.scale
+        scores = scores.masked_fill(causal_mask, float("-inf"))
 
-class Qwen3Attention(nn.Module):
-    def __init__(self, config: Qwen3Config):
+        attn_weight = torch.softmax(scores, dim=-1)
+
+        if not torch.isfinite(attn_weight).all():
+            raise RuntimeError("Non-Finite values in attention weights")
+        
+        row_sum = attn_weight.sum(dim=-1)
+        if not torch.allclose(row_sum, torch.ones_like(row_sum), atol=1e-3):
+            print("Warning: attention rows do not sum to 1")
+
+        if (attn_weight < 0).any():
+            raise RuntimeError("Negative values in attention weights")
+
+        attn_weight = F.dropout(attn_weight, dropout_p, train=self.training,)
+        out = attn_weight @ v
+
+        if not torch.isfinite(out).all():
+            raise RuntimeError("Non-finite values in attention output")
+
+        out_max = out.abs().max().item()
+        if out_max > 100:
+            print(f"Warning: attention output magnitude too large: {out_max}")
+
+        out_abs = out.abs()
+        p99 = torch.quantile(out_abs, 0.99).item()
+        p999 = torch.quantile(out_abs, 0.999).item()
+        mean = out.mean().item()
+        std = out.std().item()
+        maxv = out_abs.max().item()
+
+        print(f"p99: {p99} | p999: {p999} | mean: {mean} | std: {std} | maxv: {maxv} |")
+        return out
+
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal_mask: torch.Tensor | None):
+        dropout_p = self.dropout_p if self.training else 0.0
+
+        if self.attn_type == "flash_attn":
+            attn_output = flash_attn_func(
+                q, k, v,
+                dropout_p=dropout_p, 
+                softmax_scale=self.scale,
+                causal=self.is_causal 
+            )
+
+            attn_output = attn_output.reshape(attn_output.shape[0], attn_output.shape[1], -1)
+
+        elif self.attn_type == "sdpa":
+            attn_output = F.scaled_dot_product_attention(q,k,v, is_causal=self.is_causal, dropout_p=dropout_p)
+            attn_output = attn_output.reshape(attn_output.shape[0], attn_output.shape[2], -1)
+
+        elif self.attn_type == "eager":
+            attn_output = self._eager_attn(q,k,v, causal_mask, dropout_p)
+            attn_output = attn_output.reshape(attn_output.shape[0], attn_output.shape[2], -1)
+
+        else:
+            raise ValueError(
+                f"Unknown attn_type: {self.attn_type}. "
+                "Expected one of ['flash_attn', 'sdpa', 'eager']."
+            )
+
+
+        return attn_output
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, config: ModelConfig):
         super().__init__()
+        self.attn_type = config.attn_type
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = config.head_dim
         self.num_kv_heads = config.num_key_value_heads
+        self.attention_dropout = config.attention_dropout
+        max_seq_len = config.max_position_embeddings
 
         self.q_size = self.num_heads * self.head_dim
         self.kv_size = self.num_kv_heads * self.head_dim
@@ -83,6 +140,7 @@ class Qwen3Attention(nn.Module):
         self.qkv_proj = nn.Linear(self.hidden_size, total_out_dim, bias=config.attention_bias)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim , self.hidden_size, bias=False)
 
+        self.is_causal = True
         self.rotary_emb = RotaryEmbedding(
                     self.head_dim, 
                     rotary_dim=self.head_dim, 
@@ -91,11 +149,49 @@ class Qwen3Attention(nn.Module):
                 )
         
         self.attn = Attention(
-            scale=self.head_dim**-0.5
+            scale=self.head_dim**-0.5,
+            attn_type=self.attn_type,
+            is_causal=self.is_causal,
+            dropout_p=self.attention_dropout,
         )
 
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+
+        if max_seq_len is not None:
+            m = torch.triu(torch.ones(max_seq_len, max_seq_len, dtype=torch.bool), diagonal=1)
+            self.register_buffer("_causal_mask", m, persistent=False)
+        else:
+            self._causal_mask = None
+
+    def _get_causal_mask(self, Lq: int, Lk: int, device: torch.device) -> torch.Tensor:
+        if not self.is_causal:
+            return None
+        
+        if self._causal_mask is not None and Lq == Lk:
+            return self._causal_mask[:Lq, :Lq].to(device)
+        
+        if Lq == 1:
+            return torch.zeros((1, Lk), dtype=torch.bool, device=device)
+
+        
+        mask = torch.triu(torch.ones(Lq, Lk, device=Lq.device), diagonal=1).bool()
+        return mask
+    
+            
+    def _check_values(self, q, k, v, mask):
+        for name, x in [("q", q), ("k", k), ("v", v)]:
+            if not torch.isfinite(x).all():
+                raise RuntimeError(f"Non-finite values detected in {name}")
+
+            max_val = x.abs().max().item()
+            if max_val > 50:
+                print(f"Warning: {name} abs max too large: {max_val}")
+
+        if mask is not None:
+            row_all_masked = mask.all(dim=-1)
+            if row_all_masked.any():
+                raise RuntimeError("At least one query has all keys masked")
 
 
     def forward(self, positions,
@@ -107,12 +203,19 @@ class Qwen3Attention(nn.Module):
             
             # Split Q, K, V
             q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-            
+
+            lq, lk = q.shape[1], k.shape[1]
+
             # Reshape: [Batch, SeqLen, NumHeads, HeadDim]
             q = q.view(q.shape[0], q.shape[1], self.num_heads, self.head_dim)
             k = k.view(k.shape[0], k.shape[1], self.num_kv_heads, self.head_dim)
             v = v.view(v.shape[0], v.shape[1], self.num_kv_heads, self.head_dim)
-            
+
+            if self.attn_type == "sdpa" or self.attn_type == "eager":
+                q = q.transpose(1,2)
+                k = k.transpose(1,2)
+                v = v.transpose(1,2)
+
             q = self.q_norm(q)
             k = self.k_norm(k)
             
@@ -128,9 +231,12 @@ class Qwen3Attention(nn.Module):
 
                 current_key_value = (k, v)
 
-            attn_output = self.attn(q, k, v)
             
-            attn_output = attn_output.reshape(attn_output.shape[0], attn_output.shape[1], -1)
+            mask = self._get_causal_mask(lq, lk, device=q.device)
+            
+            self._check_values(q, k, v, mask)
+            attn_output = self.attn(q, k, v, mask)
+            
             output = self.o_proj(attn_output)
             
             return output, current_key_value
@@ -195,16 +301,22 @@ class RMSNorm(nn.Module):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
-
     def forward(self, x):
 
         var = x.pow(2).mean(dim=-1, keepdim=True)
         norm_x = x * torch.rsqrt(var + self.eps)
-        out = norm_x * self.weight
         return norm_x * self.weight
 
+class SiluAndMul(nn.Module):
 
-class Qwen3MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x, y = x.chunk(2, -1)
+        return F.silu(x) * y
+
+class MLP(nn.Module):
 
     def __init__(
         self,
@@ -233,15 +345,15 @@ class Qwen3MLP(nn.Module):
         return x
 
 
-class Qwen3DecoderLayer(nn.Module):
+class DecoderLayer(nn.Module):
 
     def __init__(
         self,
-        config: Qwen3Config,
+        config: ModelConfig,
     ) -> None:
         super().__init__()
-        self.self_attn = Qwen3Attention(config=config)
-        self.mlp = Qwen3MLP(
+        self.self_attn = SelfAttention(config=config)
+        self.mlp = MLP(
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
@@ -273,15 +385,15 @@ class Qwen3DecoderLayer(nn.Module):
         return hidden_states, present_key_value
 
 
-class Qwen3Model(nn.Module):
+class DecoderModel(nn.Module):
 
     def __init__(
         self,
-        config: Qwen3Config,
+        config: ModelConfig,
     ) -> None:
         super().__init__()
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList([Qwen3DecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([DecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
@@ -319,12 +431,12 @@ class Qwen3Model(nn.Module):
         return hidden_states
 
 
-class Qwen3CausalLM(nn.Module):
+class DecoderCausalLM(nn.Module):
     
-    def __init__(self,config: Qwen3Config):
+    def __init__(self,config: ModelConfig):
         super().__init__()
         self.config = config
-        self.base = Qwen3Model(config=config)
+        self.base = DecoderModel(config=config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
 
     def get_input_embeddings(self):

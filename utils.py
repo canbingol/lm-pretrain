@@ -57,7 +57,7 @@ def build_argparser():
     parser.add_argument("--config", type=str, help="Path to YAML config file")
     parser.add_argument("--training-type", type=str, help="training type")
 
-    parser.add_argument('--model', type=str, choices=["qwen3", "deepseek", "gemma2", "llama2", "gptoss", "gpt2"])
+    parser.add_argument('--model', type=str, choices=["decoder"])
     parser.add_argument('--epoch', type=int)
     parser.add_argument('--world-size', type=int)
 

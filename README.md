@@ -4,8 +4,6 @@
 
 # LM-Pretrain: Pretraining and Instruction Tuning for Language Models
 
-This repository was created for the experimental pretraining and instruction tuning of SOTA language models.
-Currently supported architectures: **DeepSeek**, **Qwen**, **LLaMA** ve **Gemma**.
 
 ---
 

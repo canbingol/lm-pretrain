@@ -29,7 +29,7 @@ from utils import (
 )
 
 # model registry - separated by domain
-from models.qwen3 import Qwen3CausalLM, Qwen3Config
+from models.decoder_model import DecoderCausalLM, ModelConfig
 
 # Seed info
 torch.manual_seed(42)
@@ -116,7 +116,7 @@ def main():
 
 
     model_map = {
-        "qwen3": (Qwen3Config, Qwen3CausalLM)
+        "decoder": (ModelConfig, DecoderCausalLM)
     }
 
     dtype_map = {
