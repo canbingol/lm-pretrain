@@ -19,6 +19,10 @@ def generate(model, tokenizer, prompt, device="cuda", max_new_tokens=64,tempratu
     model.to(device).eval()
     input_ids = tokenizer.encode(prompt,return_tensors="pt")
     input_ids = input_ids[None,:].to(device) if input_ids.ndim == 1 else input_ids.to(device)
+
+    if model.config.attn_type == "flash_attn":
+        model = model.to(torch.bfloat16)
+
     for i in range(max_new_tokens):
         logits = model(input_ids)
         logits = logits[:,-1,:] / temprature
@@ -56,7 +60,7 @@ def main():
     prompt = args.prompt
 
     model_map = {
-        "qwen3": (Qwen3Config, Qwen3CausalLM)
+        "decoder": (ModelConfig, DecoderCausalLM)
 
     }
     snapshot = torch.load(cp,map_location="cuda")
