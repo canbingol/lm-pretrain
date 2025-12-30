@@ -24,7 +24,7 @@ class ModelConfig:
     intermediate_size: int = 3072
     max_position_embeddings: int = 40960    
     max_window_layers: int = 28
-    model_type: str = "decoder_only"
+    model_type: str = "decoder"
     num_attention_heads: int = 16
     num_hidden_layers: int = 1
     num_key_value_heads: int = 8
@@ -38,6 +38,23 @@ class ModelConfig:
     use_sliding_window: bool = False
     vocab_size: int = 50176
     attn_type = "flash_attn"
+
+
+def repeat_kv(x: torch.tensor, n_rep: int) -> torch.tensor:
+    batch_size, seq_len, n_kv_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    
+    return(
+        # (batch_size, seq_len, n_kv_heads, 1, head_dim)
+        x[:, :, :, None, :]
+
+        # (batch_size, seq_len, n_kv_heads, n_rep, head_dim)
+        .expand(batch_size, seq_len,n_kv_heads,n_rep,head_dim)
+
+        #! (batch_size, seq_len, n_kv_heads * n_rep, head_dim)
+        .reshape(batch_size, seq_len,n_kv_heads * n_rep,head_dim)
+    )
 
 class Attention(nn.Module):
     def __init__(
@@ -70,7 +87,7 @@ class Attention(nn.Module):
         if (attn_weight < 0).any():
             raise RuntimeError("Negative values in attention weights")
 
-        attn_weight = F.dropout(attn_weight, dropout_p, train=self.training,)
+        attn_weight = F.dropout(attn_weight, dropout_p, training=self.training,)
         out = attn_weight @ v
 
         if not torch.isfinite(out).all():
@@ -80,7 +97,7 @@ class Attention(nn.Module):
         if out_max > 100:
             print(f"Warning: attention output magnitude too large: {out_max}")
 
-        out_abs = out.abs()
+        out_abs = out.abs().to(torch.float32)
         p99 = torch.quantile(out_abs, 0.99).item()
         p999 = torch.quantile(out_abs, 0.999).item()
         mean = out.mean().item()
@@ -117,9 +134,7 @@ class Attention(nn.Module):
                 "Expected one of ['flash_attn', 'sdpa', 'eager']."
             )
 
-
         return attn_output
-
 
 class SelfAttention(nn.Module):
     def __init__(self, config: ModelConfig):
@@ -206,10 +221,13 @@ class SelfAttention(nn.Module):
 
             lq, lk = q.shape[1], k.shape[1]
 
+
             # Reshape: [Batch, SeqLen, NumHeads, HeadDim]
             q = q.view(q.shape[0], q.shape[1], self.num_heads, self.head_dim)
             k = k.view(k.shape[0], k.shape[1], self.num_kv_heads, self.head_dim)
             v = v.view(v.shape[0], v.shape[1], self.num_kv_heads, self.head_dim)
+
+            q, k = self.rotary_emb(positions, q, k)
 
             if self.attn_type == "sdpa" or self.attn_type == "eager":
                 q = q.transpose(1,2)
@@ -219,19 +237,25 @@ class SelfAttention(nn.Module):
             q = self.q_norm(q)
             k = self.k_norm(k)
             
-            q, k = self.rotary_emb(positions, q, k)
-            
             current_key_value = None
             if use_cache:
-
                 if past_key_value is not None:
                     past_k, past_v = past_key_value
-                    k = torch.cat((past_k, k), dim=1)
-                    v = torch.cat((past_v, v), dim=1)
+
+                    dim = 1 if self.attn_type == "flash_attn" else 2
+                    k = torch.cat((past_k, k), dim=dim)
+                    v = torch.cat((past_v, v), dim=dim)
 
                 current_key_value = (k, v)
 
-            
+
+            assert self.num_heads % self.num_kv_heads == 0
+
+            n_rep = self.num_heads // self.num_kv_heads
+
+            k = repeat_kv(x=k, n_rep=n_rep)
+            v = repeat_kv(x=v, n_rep=n_rep)
+
             mask = self._get_causal_mask(lq, lk, device=q.device)
             
             self._check_values(q, k, v, mask)
@@ -436,6 +460,7 @@ class DecoderCausalLM(nn.Module):
     def __init__(self,config: ModelConfig):
         super().__init__()
         self.config = config
+        self.name = config.config_name
         self.base = DecoderModel(config=config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size)
 
@@ -487,14 +512,20 @@ class DecoderCausalLM(nn.Module):
             seq_len = input_ids.size(1)
 
             # Prefill
+            # No history exists yet. Generate positions for the entire prompt (e.g., 0, 1, 2...).
             if past_key_values is None:
                 positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
 
             # Decode
+            # History exists. We need to manually tell the model the position index 
+            # for the SINGLE new token being processed.
             else:
-                current_pos = generated_ids.shape[1] - 1
+                current_pos = generated_ids.shape[1] - 1 # Total length - 1 = Index of the new token
                 positions = torch.tensor([[current_pos]], device=input_ids.device)
-            
+
+            # INPUT PREPARATION:
+            # If cache exists, feed ONLY the last token (newly generated one) to save compute.
+            # If no cache (first run), feed the whole prompt.
             model_input = input_ids if past_key_values is None else input_ids[:, -1:]
 
             # Forward pass
@@ -506,7 +537,7 @@ class DecoderCausalLM(nn.Module):
             hidden_states, past_key_values = outputs # Update cache
 
             logits = self.lm_head(hidden_states)
-
+            print(f"logits.shape: {logits.shape}")
             logits = logits[:,-1,:]
 
             # Temperature
