@@ -4,6 +4,10 @@
 
 # LM-Pretrain: Pretraining and Instruction Tuning for Language Models
 
+<p align="center">
+  <strong>❗ Warning:</strong> <span style="color:red">This README is not up to date.</span>
+</p>
+
 
 ---
 
