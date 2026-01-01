@@ -4,10 +4,6 @@
 
 # LM-Pretrain: Pretraining and Instruction Tuning for Language Models
 
-<p align="center">
-  <strong>❗ Warning:</strong> <span style="color:red">This README is not up to date.</span>
-</p>
-
 
 ---
 
@@ -32,7 +28,6 @@ Feel free to reach out:
 
 ## Model Design Notes
 
-- Some models in this repository are implemented based on their original repositories. Others are adapted from Hugging Face’s `transformers` library and simplified.
 - The configuration files in `config/` or passed via CLI are **not exact replicas** of official SOTA model configs.
 - Hugging Face models are used for the tokenizer (Also you can train your tokenizer with train_tokenizer.py).
 - You can modify the model configuration (number of layers, hidden size, vocab size, etc.) via CLI or config files.
@@ -68,21 +63,20 @@ When training starts, an output directory is created at `output/<model_name>` co
 
 ```
 output/
-├── gemma/
-│   ├── gemma.tokenizer.model     # SentencePiece tokenizer model
-│   ├── gemma.tokenizer.vocab     # Tokenizer vocabulary file
-│   ├── gemma2_best_model.pt      # Best checkpoint (lowest validation loss)
-│   ├── sample.txt                # Human-readable example tokenizations
-│   └── ttc4900.txt               # Text dump used for tokenizer training
-├── qwen3/
-├── qwen3_force/
+├── decoder_pretrain_60M/
+│   ├── decoder_only_best_model.pt      # Best checkpoint (lowest validation loss)
+│   ├── train_loss.txt                  # Train loss (each step)
+│   ├── validaiton_loss.txt             # Train loss (each step)
+
+
+
 ```
 
 > [!WARNING]
 > Pipeline no longer train a tokenizer; instead, it using a pretrained tokenizer from Hugging Face.
 
-> If the `--force` flag is used, a new directory like `output/<model_name>_force/` is created.
-> In this case, **all assets including tokenizer and checkpoints will be regenerated**, and no previously saved files will be reused.
+> If the `--force` flag is used, a new directory like `output/<model_name>_force_current_time/` is created.
+> In this case, **all assets including checkpoints will be regenerated**, and no previously saved files will be reused.
 
 ## Arguments
 
@@ -97,44 +91,41 @@ config_yamls/
 > Both `--config` and `--training-type` are provided inside `run.sh`, while all other arguments should be defined in the corresponding YAML configuration files.
 
 
-| Argument | Description | Default |
-|-----------|--------------|----------|
-| `--config` | Path to the YAML configuration file | `None` |
-| `--training-type` | Training mode to run (`pre-train`, `instruction-tuning`, `inference`) | **Required** |
-| `--model` | Model architecture to use (`qwen3`, `deepseek`, `gemma2`, `llama2`) | `"gemma2"` |
-| `--epoch` | Number of training epochs | `1` |
-| `--training-steps` | Maximum number of training steps (if `None`, computed automatically) | `None` |
-| `--eval-steps` | Evaluation interval (in steps) | `100` |
-| `--eval-sample` | Number of samples used during each evaluation phase | `10` |
-| `--vocab-size` | Vocabulary size used by the tokenizer and model | `50176` |
-| `--batch-size` | Batch size for training and evaluation | `60` |
-| `--lr` | Learning rate | `1e-3` |
-| `--max-seq-len` | Maximum sequence length per input | `256` |
-| `--text-column-name` | Column name containing the input text in the dataset | `"text"` |
-| `--pre-training-hf-data` | Hugging Face dataset name or path used for **pretraining** | `"canbingol/vngrs-web-corpus-200k"` |
-| `--it-hf-data` | Hugging Face dataset name or path used for **instruction tuning** | `"merve/turkish_instructions"` |
-| `--hf-tokenizer` | Path or name of the Hugging Face tokenizer to load | `"vngrs-ai/Kumru-2B"` |
-| `--saved-token-path` | Directory to store processed tokenized binary files | `"./data/pretrain/default_tokenizer"` |
-| `--checkpoint` | Path to the model checkpoint file | `"./output/gemma2/gemma2_best_model.pt"` |
-| `--world-size` | Number of processes (GPUs) used in distributed training | `4` |
-| `--max-new-tokens` | Maximum number of tokens to generate during inference | `64` |
-| `--prompt` | Input prompt text used during inference | `"merhaba"` |
-| `--train-tokenizer` | Train a new tokenizer from scratch | `False` |
-| `--model-info` | Print model configuration before training starts | `True` |
-| `--inference` | Run inference mode (skip training) | `False` |
-| `--force` | Force training from scratch (ignore checkpoints) | `False` |
-| `--shuffle` | Shuffle dataset during loading | `False` |
-| `--drop-last` | Drop the last incomplete batch | `True` |
-| `--num-workers` | Number of data loader workers | `0` |
-| `--pin-memory` | Enable pinned memory for DataLoader | `True` |
-| `--single-file` | Path to a single dataset file (used for debugging or manual runs) | `None` |
+
+| Argument | Type | Description | Default |
+|---------|------|-------------|---------|
+| `--config` | `str` | Path to the YAML configuration file | `None` |
+| `--training-type` | `str` | Training mode to run (no validation enforced in code) | `None` |
+| `--model` | `str` | Model architecture to use (choices: `decoder`) | `None` |
+| `--epoch` | `int` | Number of training epochs | `None` |
+| `--world-size` | `int` | Number of processes (GPUs) used in distributed training | `None` |
+| `--world_size` | `int` | **Duplicate argument** (underscore version of `--world-size`) | `None` |
+| `--training-steps` | `int` | Maximum number of training steps | `None` |
+| `--eval-steps` | `int` | Evaluation interval (in steps) | `None` |
+| `--eval-sample` | `int` | Number of samples used during each evaluation phase | `None` |
+| `--vocab-size` | `int` | Vocabulary size used by tokenizer and model | `None` |
+| `--batch-size` | `int` | Batch size for training and evaluation | `None` |
+| `--lr` | `float` | Learning rate | `None` |
+| `--max-seq-len` | `int` | Maximum sequence length per input | `None` |
+| `--text-column-name` | `str` | Column name containing the input text in the dataset | `None` |
+| `--pre-training-hf-data` | `str` | Hugging Face dataset name or path used for pretraining | `None` |
+| `--it-hf-data` | `str` | Hugging Face dataset name or path used for instruction tuning | `None` |
+| `--hf-tokenizer` | `str` | Path or name of the Hugging Face tokenizer to load | `None` |
+| `--saved-token-path` | `str` | Directory to store processed tokenized binary files | `None` |
+| `--checkpoint` | `str` | Path to the model checkpoint file | `None` |
+| `--max-new-tokens` | `int` | Maximum number of tokens to generate during inference | `None` |
+| `--prompt` | `str` | Input prompt text used during inference | `None` |
+| `--model-info` | `flag` | Print model configuration before training starts | `False` |
+| `--train-tokenizer` | `flag` | Train a new tokenizer from scratch | `False` |
+| `--inference` | `flag` | Run inference mode (skip training) | `False` |
+| `--force` | `flag` | Force training from scratch (ignore checkpoints) | `False` |
+| `--shuffle` | `flag` | Shuffle dataset during loading | `False` |
+| `--drop-last` | `flag` | Drop the last incomplete batch (**always True due to code**) | `True` |
+| `--num-workers` | `int` | Number of DataLoader workers | `0` |
+| `--pin-memory` | `flag` | Enable pinned memory (**always True due to code**) | `True` |
+| `--single-file` | `str` | Path to a single dataset file (debug/manual runs) | `None` |
 
 
-> **Note:** The `--force` flag disables checkpoint loading and triggers a full reset of the training environment.
-> A new output directory will be created, and all assets — including tokenizer, model config, and checkpoints — will be regenerated from scratch.
-
-> **Note:** The `--train-tokenizer` flag forces tokenizer training even if a tokenizer already exists.
-> The newly trained tokenizer will overwrite any existing tokenizer files in the specified output directory.
 
 ## Sample Usage
 
