@@ -537,7 +537,6 @@ class DecoderCausalLM(nn.Module):
             hidden_states, past_key_values = outputs # Update cache
 
             logits = self.lm_head(hidden_states)
-            print(f"logits.shape: {logits.shape}")
             logits = logits[:,-1,:]
 
             # Temperature

@@ -1,7 +1,0 @@
-# -----------------------------
-# Inference configuration
-# -----------------------------
-model: "gpt2"
-tokenizer_path: "vngrs-ai/Kumru-2B"
-prompt: "adam bir gün"
-checkpoint: "./output/gpt2/GPT2_best_model_data500k_loss4.3.pt"

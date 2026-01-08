@@ -14,7 +14,7 @@ def cross_entropy_loss_batch(model, input_batch, target_batch, device):
     loss = torch.nn.functional.cross_entropy(
         logits.reshape(-1, logits.size(-1)),
         target_batch.reshape(-1),
-        ignore_index=0
+        ignore_index= -100
     )
 
     del target_batch, logits

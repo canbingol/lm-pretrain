@@ -1,4 +1,5 @@
 import os, gc
+import yaml
 import logging
 import argparse
 import yaml
@@ -51,58 +52,18 @@ def clear_gpu_memory():
         torch.cuda.synchronize()
 
 
-def build_argparser():
+def get_config():
     parser = argparse.ArgumentParser()
     # model choosing
     parser.add_argument("--config", type=str, help="Path to YAML config file")
-    parser.add_argument("--training-type", type=str, help="training type")
 
-    parser.add_argument('--model', type=str, choices=["decoder"])
-    parser.add_argument('--epoch', type=int)
-    parser.add_argument('--world-size', type=int)
+    args = parser.parse_args()
+    path = args.config
 
-    parser.add_argument('--max-new-tokens', type=int)
-    parser.add_argument('--max-seq-len', type=int)
-    parser.add_argument('--prompt', type=str)
-    parser.add_argument('--training-steps', type=int)
-    parser.add_argument('--lr', type=float)
-    parser.add_argument('--eval-steps', type=int)
-    parser.add_argument('--eval-sample', type=int)
-    parser.add_argument('--vocab-size', type=int)
-    parser.add_argument('--batch-size', type=int)
-    parser.add_argument('--text-column-name', type=str)
-    parser.add_argument('--model-info', action="store_true")
-    parser.add_argument('--train-tokenizer', action="store_true")
-    parser.add_argument('--inference', action="store_true")
-    parser.add_argument('--force', action="store_true")
-    parser.add_argument('--pre-training-hf-data', type=str)
-    parser.add_argument('--it-hf-data', type=str)
-    parser.add_argument('--hf-tokenizer', type=str)
+    with open(path) as stream:
+        configs = yaml.safe_load(stream=stream)
 
-    parser.add_argument('--world_size', type=int)
-    parser.add_argument('--checkpoint', type=str)
-    parser.add_argument('--saved-token-path', type=str)
-
-    parser.add_argument('--shuffle', action='store_true', default=False)
-    parser.add_argument('--drop-last', action='store_true', default=True)
-    parser.add_argument('--num-workers', default=0, type=int)
-    parser.add_argument('--pin-memory', action='store_true', default=True)
-    parser.add_argument('--single-file', default=None, type=str)
-
-
-    return parser
-
-def load_yaml(path):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
-
-def merge_args_with_yaml(args,yaml_cfg):
-    for key, value in yaml_cfg.items():
-
-        key_ = key.replace("-","_")
-        if getattr(args, key_,None) in [None, False]:
-            setattr(args, key_, value)
-    return args
+    return configs
 
 def format_it_data(query: str, input: str, answer: str) -> str:
     """

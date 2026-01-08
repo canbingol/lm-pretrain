@@ -7,10 +7,6 @@ import argparse, sys
 import torch
 from transformers import AutoTokenizer
 
-from utils import (
-    load_yaml,
-    merge_args_with_yaml
-)
 from models.decoder_model import DecoderCausalLM, ModelConfig
 
 
@@ -52,8 +48,7 @@ def main():
     parser.add_argument('--prompt', type=str)
     args = parser.parse_args()
 
-    yaml_cfg = load_yaml(args.config)
-    args = merge_args_with_yaml(args,yaml_cfg)
+    args = "TEMP"
 
     cp = args.checkpoint
     tokenizer_path = args.tokenizer_path

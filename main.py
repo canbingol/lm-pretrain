@@ -18,12 +18,10 @@ from data_prepare import (
 )
 from utils import (
     load_model,
-    build_argparser,
+    get_config,
     TrainState,
     TrainConfig,
     DataLoaders,
-    merge_args_with_yaml,
-    load_yaml,
     setup_logger,
     get_unique_filename
 )
@@ -42,13 +40,13 @@ def ddp_setup(WORLD_SIZE):
     init_process_group(backend=backend)
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
-def get_pretrain_data(gpu_id, saved_tokens_path, BATCH_SIZE, SHUFFLE,
+def get_pretrain_data(gpu_id, TOKEN_PATH, BATCH_SIZE, SHUFFLE,
                         DROP_LAST, NUM_WORKERS, PIN_MEMORY, SINGLE_FILE, logger):
     """
     This Function create train and validation loaders for pre training
     """
     train_loader, val_loader = prepare_pretrain_data(
-        token_file_data_dir=saved_tokens_path, batch_size=BATCH_SIZE,shuffle=SHUFFLE,
+        token_file_data_dir=TOKEN_PATH, batch_size=BATCH_SIZE,shuffle=SHUFFLE,
         drop_last=DROP_LAST, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY, single_file=SINGLE_FILE,
         gpu_id=gpu_id
         )
@@ -70,49 +68,66 @@ def get_it_data(gpu_id, tokenizer, IT_HF_DATA, BATCH_SIZE, MAX_SEQ_LEN):
 
 def main():
 
-    parser = build_argparser()
-    args = parser.parse_args()
-    if args.config:
-        yaml_cfg = load_yaml(args.config)
-        args = merge_args_with_yaml(args, yaml_cfg)
+    config = get_config()
+
+# config: YAML'dan load edilmiş dict
+
+    WORLD_SIZE = int(config["train"]["world_size"])
+    TRAINING_TYPE = str(config["train"]["training_type"])
+    MODEL = str(config["train"]["model"])
+
+    VOCAB_SIZE = int(config["data"]["vocab_size"])
+    BATCH_SIZE = int(config["data"]["batch_size"])
+    EPOCH = int(config["train"]["epoch"])
+
+    EVAL_SAMPLE = int(config["train"]["eval_sample"])
+    EVAL_STEPS = int(config["train"]["eval_steps"])
+    LR = float(config["train"]["lr"])
+
+    SHUFFLE = bool(config["data"]["shuffle"])
+    DROP_LAST = bool(config["data"]["drop_last"])
+    NUM_WORKERS = int(config["data"]["num_workers"])
+    PIN_MEMORY = bool(config["data"]["pin_memory"])
+
+    SINGLE_FILE = str(config["data"]["single_file"]) if config["data"].get("single_file") is not None else None
+
+    TEST_SPLIT = int(config["data"]["test_split"])
+    TOKENS_CHUNK_SIZE = int(config["data"]["tokens_chunks_size"])
+    TOKEN_DTYPE = str(config["data"]["token_dtype"])
+    PRE_TRAINING_HF_DATA = str(config["data"]["pretraining_hf_data"])
+    IT_HF_DATA = str(config["data"]["it_hf_data"])
+    HF_TOKENIZER = str(config["data"]["hf_tokenizer"])
+
+    FORCE = bool(config["train"]["force"])
+
+    INFERENCE = bool(config["inference"]["inference"])
+    PROMPT = str(config["inference"]["prompt"])
+    MAX_NEW_TOKENS = int(config["inference"]["max_new_tokens"])
+
+    MAX_SEQ_LEN = int(config["data"]["max_seq_len"])
+
+    TRAINING_STEPS = config["train"].get("training_steps", None)
+    TRAINING_STEPS = int(TRAINING_STEPS) if TRAINING_STEPS is not None else None
+    
+    # checkpoint_path: INFERENCE'a göre seç
+    if INFERENCE:
+        checkpoint_path = config["inference"].get("checkpoint", None)
+    else:
+        checkpoint_path = config["train"].get("checkpoint", None)
+
+    checkpoint_path = str(checkpoint_path) if checkpoint_path is not None else None
 
 
-    WORLD_SIZE = int(args.world_size)
-    TRAINING_TYPE = args.training_type
-    MODEL = str(args.model)
-    VOCAB_SIZE = int(args.vocab_size)
-    BATCH_SIZE = int(args.batch_size)
-    EPOCH = int(args.epoch)
-    EVAL_SAMPLE = int(args.eval_sample)
-    EVAL_STEPS = int(args.eval_steps)
-    LR = float(args.lr)
-    SHUFFLE = bool(args.shuffle)
-    DROP_LAST = bool(args.drop_last)
-    NUM_WORKERS = int(args.num_workers)
-    PIN_MEMORY = bool(args.pin_memory)
-    SINGLE_FILE = str(args.single_file) if args.single_file is not None else None
-    SAVED_TOKEN_PATH = str(args.saved_token_path)
-    PRE_TRAINING_HF_DATA = str(args.pre_training_hf_data)
-    IT_HF_DATA = str(args.it_hf_data)
-    HF_TOKENIZER = str(args.hf_tokenizer)
-    FORCE = bool(args.force)
-    INFERENCE = bool(args.inference)
-    PROMPT = str(args.prompt)
-    checkpoint_path = str(args.checkpoint)
-    MAX_NEW_TOKENS = int(args.max_new_tokens)
-    MAX_SEQ_LEN = int(args.max_seq_len)
-    TRAINING_STEPS = (
-    int(args.training_steps)
-    if args.training_steps not in [None, "None", "none", ""]
-    else None
-    )
     ddp_setup(WORLD_SIZE)
 
-    saved_tokens_path = SAVED_TOKEN_PATH
+    TOKEN_PATH = None
+    if TRAINING_TYPE == "pre-train":
+        TOKEN_PATH = str(config["data"]["token_path"])
 
     # If given saved token path not exist create .bin files with given hf dataset
-    if not os.path.exists(saved_tokens_path) or len(os.listdir(saved_tokens_path)) == 0:
-        saved_tokens_path = create_tokens_file(PRE_TRAINING_HF_DATA, HF_TOKENIZER)
+    if TRAINING_TYPE != "pre-train" or TOKEN_PATH is None or not os.path.exists(TOKEN_PATH) or len(os.listdir(TOKEN_PATH)) == 0:
+        TOKEN_PATH = create_tokens_file(hf_dataset=PRE_TRAINING_HF_DATA, hf_tokenizer=HF_TOKENIZER, base_dir=TOKEN_PATH,
+                                               test_split=TEST_SPLIT, tokens_chunks_size=TOKENS_CHUNK_SIZE, dtype=TOKEN_DTYPE)
 
 
     model_map = {
@@ -186,7 +201,6 @@ def main():
         logger.info(f"Run started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 80)
 
-
     # Make inference
     if INFERENCE:
         if gpu_id == 0:
@@ -198,7 +212,7 @@ def main():
 
     # Prepare training data for pre-train or instruction tuning
     if TRAINING_TYPE == "pre-train":
-        train_loader, val_loader = get_pretrain_data(gpu_id, saved_tokens_path, BATCH_SIZE, SHUFFLE,
+        train_loader, val_loader = get_pretrain_data(gpu_id, TOKEN_PATH, BATCH_SIZE, SHUFFLE,
                         DROP_LAST, NUM_WORKERS, PIN_MEMORY, SINGLE_FILE, logger)
 
     else:

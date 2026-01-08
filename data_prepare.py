@@ -11,15 +11,16 @@ from transformers import AutoTokenizer
 
 from utils import format_it_data
 
-def create_tokens_file(hf_dataset: str ,hf_tokenizer, base_dir: str="./data/pretrain", tokenizer_name: type= "default_tokenizer",
-                       test_split: int= 0.05, tokens_chunks_size: int = 25_000_000, dtype: str = np.uint16, gpu_id: int= 0):
-
+def create_tokens_file(hf_dataset: str ,hf_tokenizer, base_dir: str="./data/pretrain",test_split: int= 0.05,
+                       tokens_chunks_size: int = 25_000_000, dtype: str = np.uint16, gpu_id: int= 0):
+    
+    tokenizer_name = hf_tokenizer.split("/")
     tokenizer = AutoTokenizer.from_pretrained(hf_tokenizer)
 
     save_dir = f"{base_dir}/{tokenizer_name}"
     os.makedirs(save_dir, exist_ok=True)
     mode = "train"
-    data = load_dataset(hf_dataset,split="train")
+    data = load_dataset(hf_dataset, split="train")
 
     shard_id = 0
     token_list = []
@@ -49,7 +50,7 @@ def create_tokens_file(hf_dataset: str ,hf_tokenizer, base_dir: str="./data/pret
 
     return save_dir
 
-def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_last=True, num_workers=0, pin_memory=True, single_file: int= None, gpu_id: int= 0, skip_ddp=False):
+def prepare_pretrain_data(token_file_data_dir, batch_size, max_seq_len=512, pad_token=0, shuffle=False, drop_last=True, num_workers=0, pin_memory=True, single_file: int= None, gpu_id: int= 0, skip_ddp=False):
 
     class PretrainDataset(Dataset):
         def __init__(self, mode, exist_data_dir, max_seq_len, pad_token):
@@ -88,10 +89,10 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
 
 
     train_dataset = PretrainDataset(mode= "train", exist_data_dir= token_file_data_dir,
-                                    max_seq_len= 512, pad_token= 0)
+                                    max_seq_len= max_seq_len, pad_token= pad_token)
 
     val_dataset = PretrainDataset(mode= "validation", exist_data_dir= token_file_data_dir,
-                                    max_seq_len= 512, pad_token= 0)
+                                    max_seq_len= max_seq_len, pad_token= pad_token)
 
     if skip_ddp:
         train_dataloader = DataLoader(
@@ -137,7 +138,7 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, shuffle=False, drop_l
     return train_dataloader, val_dataloader
 
 
-def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gpu_id):
+def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gpu_id, skipp_ddp:bool=False):
 
     def find_sub(seq, sub):
         sub = torch.as_tensor(sub)
@@ -150,7 +151,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
     class ITDataset(Dataset):
         def __init__(self, mode, data, tokenizer, max_seq_len, pad_token: int= 0, eos_token:int= 3, gpu_id=gpu_id):
             super().__init__()
-            assistant_token_ids = tokenizer.encode("<|start_header_id|>assistant<|end_header_id|>", add_special_tokens=False)
+            assistant_token_ids = tokenizer.encode("<|start_header_id|>assistant<|end_header_id|>\n", add_special_tokens=False)
             self.input_ids, self.target_ids = [], []
             bar = tqdm(data, total=len(data), desc=f"iterating IT data for {mode}") if gpu_id == 0 else data
             for item in bar:
@@ -167,7 +168,7 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
 
                 start_idx = find_sub(target_, assistant_token_ids) + 3
                 mask_start = max(0, start_idx-1)
-                target_[:mask_start] = 0
+                target_[:mask_start] = -100
                 self.input_ids.append(input_)
                 self.target_ids.append(target_)
 
@@ -188,26 +189,45 @@ def prepare_it_data(hf_dataset,tokenizer, batch_size, max_seq_len, pad_token, gp
     train_dataset = ITDataset("train",train_data , tokenizer, max_seq_len, pad_token)
 
     val_dataset = ITDataset("validation", val_data, tokenizer, max_seq_len, pad_token)
-
-    train_dataloader = DataLoader(
+    
+    if skipp_ddp:
+        train_dataloader = DataLoader(
         dataset = train_dataset,
         batch_size = batch_size,
-        sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
         shuffle = False,
         drop_last = True,
         num_workers = 0,
         pin_memory = True
-    )
+        )
 
-    val_dataloader = DataLoader(
-        dataset = val_dataset,
-        batch_size = batch_size,
-        sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
-        shuffle = False,
-        drop_last = True,
-        num_workers = 0,
-        pin_memory = True
-    )
+        val_dataloader = DataLoader(
+            dataset = val_dataset,
+            batch_size = batch_size,
+            shuffle = False,
+            drop_last = True,
+            num_workers = 0,
+            pin_memory = True
+        )
+    else:
+        train_dataloader = DataLoader(
+            dataset = train_dataset,
+            batch_size = batch_size,
+            sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
+            shuffle = False,
+            drop_last = True,
+            num_workers = 0,
+            pin_memory = True
+        )
+
+        val_dataloader = DataLoader(
+            dataset = val_dataset,
+            batch_size = batch_size,
+            sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
+            shuffle = False,
+            drop_last = True,
+            num_workers = 0,
+            pin_memory = True
+        )
 
     gc.collect()
     return train_dataloader, val_dataloader
