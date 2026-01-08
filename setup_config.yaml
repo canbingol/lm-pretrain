@@ -28,7 +28,6 @@ data:
   vocab_size: 50176
   batch_size: 1
 
-  max_seq_len: 256
   shuffle: False
   drop_last: True
   num_workers: 0

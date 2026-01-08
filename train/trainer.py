@@ -76,7 +76,6 @@ class Trainer:
         token_seen , global_step = 0, -1
 
         best_val_loss = float("inf")
-        optimizer = torch.optim.AdamW(model.parameters(),1e-4, weight_decay=0.1)
 
         for epoch in range(num_epochs):
             model.train()
