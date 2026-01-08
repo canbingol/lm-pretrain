@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 
+# Notebooks
+*.ipynb
+
 # Data and output
 data/
 output/

@@ -4,7 +4,6 @@
 
 # LM-Pretrain: Pretraining and Instruction Tuning for Language Models
 
-
 ---
 
 ## Project Status
@@ -12,7 +11,7 @@
 This project is currently under **active development** and should be considered **experimental**.
 The goal is to develop a fully modular and extensible framework for **pretraining**, **instruction tuning**, and **RLHF** on large language models, enabling easy architectural customization.
 
-I’m actively working on improving the codebase and would appreciate any feedback or suggestions.
+I'm actively working on improving the codebase and would appreciate any feedback or suggestions.
 
 Feel free to reach out:
 
@@ -25,12 +24,15 @@ Feel free to reach out:
 > In this repository, several components are hard-coded.
 > Make sure to review and adjust them before adapting the code to your own setup.
 
+## Features
 
-## Model Design Notes
-
-- The configuration files in `config/` or passed via CLI are **not exact replicas** of official SOTA model configs.
-- Hugging Face models are used for the tokenizer (Also you can train your tokenizer with train_tokenizer.py).
-- You can modify the model configuration (number of layers, hidden size, vocab size, etc.) via CLI or config files.
+- **Decoder-only Transformer**: Custom implementation with Grouped Query Attention (GQA), RoPE embeddings, and RMSNorm
+- **Multiple Attention Backends**: FlashAttention, PyTorch SDPA, and eager attention
+- **Distributed Training**: Full DDP support with torchrun
+- **Two Training Modes**: Pretraining and instruction tuning pipelines
+- **Learning Rate Scheduling**: Warmup + cosine annealing scheduler
+- **Checkpointing**: Automatic best model saving based on validation loss
+- **Text Generation**: Sampling with temperature and top-k support
 
 ## Installation
 
@@ -38,220 +40,298 @@ Feel free to reach out:
 git clone https://github.com/canbingol/lm-pretrain.git
 cd lm-pretrain
 pip install -r requirements.txt
-
 ```
 
-## Pre-Training Data Directory Structure
+### Requirements
 
-For efficiency, pretraining tokens are precomputed using the tokenizer and saved as binary files.
+- Python 3.10+
+- PyTorch 2.0+
+- Hugging Face Transformers
+- Hugging Face Datasets
+- (Optional) flash-attn for FlashAttention support
 
-```
-data/
-├── pretrain/
-│   ├── tokenizer_name/
-│   |   ├── train_00.bin
-|   |   |── train_01.bin
-|   |   |── ....
-|   |   |── validation_00.bin
-|   |   |── ....
-```
-
-
-## Output Directory Structure
-
-When training starts, an output directory is created at `output/<model_name>` containing the following files:
+## Project Structure
 
 ```
-output/
-├── decoder_pretrain_60M/
-│   ├── decoder_only_best_model.pt      # Best checkpoint (lowest validation loss)
-│   ├── train_loss.txt                  # Train loss (each step)
-│   ├── validaiton_loss.txt             # Train loss (each step)
-
-
-
+lm-pretrain/
+├── main.py              # Main entry point for training and inference
+├── data_prepare.py      # Dataset preparation for pretraining and IT
+├── inference.py         # Text generation utilities
+├── utils.py             # Utility functions and dataclasses
+├── run.sh               # Training launcher script
+├── setup_config.yaml    # Example configuration file
+├── models/
+│   └── decoder_model.py # Decoder-only transformer implementation
+├── train/
+│   ├── trainer.py       # Training loop with DDP
+│   └── loss_func.py     # Loss calculation and evaluation
+└── data/
+    └── pretrain/        # Tokenized binary files directory
 ```
 
-> [!WARNING]
-> Pipeline no longer train a tokenizer; instead, it using a pretrained tokenizer from Hugging Face.
+## Model Architecture
 
-> If the `--force` flag is used, a new directory like `output/<model_name>_force_current_time/` is created.
-> In this case, **all assets including checkpoints will be regenerated**, and no previously saved files will be reused.
+The decoder-only model includes:
 
-## Arguments
+| Component | Description |
+|-----------|-------------|
+| **Attention** | Grouped Query Attention (GQA) with configurable head counts |
+| **Position Encoding** | Rotary Position Embeddings (RoPE) |
+| **Normalization** | RMSNorm (pre-norm architecture) |
+| **Activation** | SiLU (SwiGLU-style MLP) |
+| **Attention Types** | `flash_attn`, `sdpa`, `eager` |
 
-### Yaml File Structure
+### Default Model Configuration
+
+| Parameter | Default Value | Description |
+|-----------|---------------|-------------|
+| `hidden_size` | 512 | Hidden state dimensionality |
+| `intermediate_size` | 3072 | MLP intermediate size |
+| `num_hidden_layers` | 1 | Number of transformer layers |
+| `num_attention_heads` | 16 | Number of attention heads |
+| `num_key_value_heads` | 8 | Number of KV heads (for GQA) |
+| `head_dim` | 128 | Dimension per attention head |
+| `vocab_size` | 50176 | Vocabulary size |
+| `max_position_embeddings` | 40960 | Maximum sequence length |
+| `torch_dtype` | bfloat16 | Model precision |
+| `attn_type` | flash_attn | Attention implementation |
+
+## Configuration
+
+All training parameters are specified in a YAML configuration file:
+
+### Example Configuration (`setup_config.yaml`)
+
+```yaml
+inference:
+  inference: False
+  max_new_tokens: 64
+  prompt: "merhaba"
+  checkpoint: None
+
+train:
+  model: "decoder"
+  world_size: 1
+  force: False
+  training_type: pre-train    # Options: "pre-train" or "instruction-tuning"
+  epoch: 5
+  lr: 1e-4
+  eval_steps: 10
+  eval_sample: 1
+
+data:
+  hf_tokenizer: "vngrs-ai/Kumru-2B"
+  pretraining_hf_data: "canbingol/vngrs-web-corpus-500k"
+  it_hf_data: "canbingol/turkish_instructions"
+  token_path: "./data/pretrain/default_tokenizer"
+  tokens_chunks_size: 25000000
+  test_split: 0.05
+  token_dtype: np.uint16
+  vocab_size: 50176
+  batch_size: 1
+  max_seq_len: 512
+  shuffle: False
+  drop_last: True
+  num_workers: 0
+  pin_memory: True
 ```
-config_yamls/
-├── inference_config.yaml
-├── train_config.yaml
-```
 
-> [!NOTE]
-> Both `--config` and `--training-type` are provided inside `run.sh`, while all other arguments should be defined in the corresponding YAML configuration files.
+### Configuration Parameters
 
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `training_type` | `str` | Training mode: `pre-train` or `instruction-tuning` |
+| `model` | `str` | Model architecture (currently: `decoder`) |
+| `world_size` | `int` | Number of GPUs for distributed training |
+| `epoch` | `int` | Number of training epochs |
+| `lr` | `float` | Learning rate |
+| `eval_steps` | `int` | Evaluation interval (in steps) |
+| `eval_sample` | `int` | Number of batches for evaluation |
+| `hf_tokenizer` | `str` | Hugging Face tokenizer path |
+| `pretraining_hf_data` | `str` | HF dataset for pretraining |
+| `it_hf_data` | `str` | HF dataset for instruction tuning |
+| `token_path` | `str` | Directory for tokenized binary files |
+| `vocab_size` | `int` | Vocabulary size |
+| `batch_size` | `int` | Training batch size |
+| `max_seq_len` | `int` | Maximum sequence length |
+| `force` | `bool` | Force training from scratch (ignore checkpoints) |
 
+## Usage
 
-| Argument | Type | Description | Default |
-|---------|------|-------------|---------|
-| `--config` | `str` | Path to the YAML configuration file | `None` |
-| `--training-type` | `str` | Training mode to run (no validation enforced in code) | `None` |
-| `--model` | `str` | Model architecture to use (choices: `decoder`) | `None` |
-| `--epoch` | `int` | Number of training epochs | `None` |
-| `--world-size` | `int` | Number of processes (GPUs) used in distributed training | `None` |
-| `--world_size` | `int` | **Duplicate argument** (underscore version of `--world-size`) | `None` |
-| `--training-steps` | `int` | Maximum number of training steps | `None` |
-| `--eval-steps` | `int` | Evaluation interval (in steps) | `None` |
-| `--eval-sample` | `int` | Number of samples used during each evaluation phase | `None` |
-| `--vocab-size` | `int` | Vocabulary size used by tokenizer and model | `None` |
-| `--batch-size` | `int` | Batch size for training and evaluation | `None` |
-| `--lr` | `float` | Learning rate | `None` |
-| `--max-seq-len` | `int` | Maximum sequence length per input | `None` |
-| `--text-column-name` | `str` | Column name containing the input text in the dataset | `None` |
-| `--pre-training-hf-data` | `str` | Hugging Face dataset name or path used for pretraining | `None` |
-| `--it-hf-data` | `str` | Hugging Face dataset name or path used for instruction tuning | `None` |
-| `--hf-tokenizer` | `str` | Path or name of the Hugging Face tokenizer to load | `None` |
-| `--saved-token-path` | `str` | Directory to store processed tokenized binary files | `None` |
-| `--checkpoint` | `str` | Path to the model checkpoint file | `None` |
-| `--max-new-tokens` | `int` | Maximum number of tokens to generate during inference | `None` |
-| `--prompt` | `str` | Input prompt text used during inference | `None` |
-| `--model-info` | `flag` | Print model configuration before training starts | `False` |
-| `--train-tokenizer` | `flag` | Train a new tokenizer from scratch | `False` |
-| `--inference` | `flag` | Run inference mode (skip training) | `False` |
-| `--force` | `flag` | Force training from scratch (ignore checkpoints) | `False` |
-| `--shuffle` | `flag` | Shuffle dataset during loading | `False` |
-| `--drop-last` | `flag` | Drop the last incomplete batch (**always True due to code**) | `True` |
-| `--num-workers` | `int` | Number of DataLoader workers | `0` |
-| `--pin-memory` | `flag` | Enable pinned memory (**always True due to code**) | `True` |
-| `--single-file` | `str` | Path to a single dataset file (debug/manual runs) | `None` |
-
-
-
-## Sample Usage
+### Training
 
 ```bash
 cd lm-pretrain
-sh run.sh pre-train
+sh run.sh setup_config.yaml
 ```
+
+This will:
+1. Parse the YAML configuration
+2. Initialize distributed training with `torchrun`
+3. Load or create tokenized data
+4. Train the model with periodic evaluation
+5. Save the best checkpoint based on validation loss
+
+### Training Types
+
+The training type is determined by `training_type` in the config:
+
+- **`pre-train`**: Uses the pretraining pipeline which processes plain text into token sequences for next-token prediction.
+- **`instruction-tuning`**: Uses the instruction tuning pipeline which constructs instruction-response pairs with target masking.
+
+### Inference
+
+Set `inference: True` in the config and provide a checkpoint path:
+
+```yaml
+inference:
+  inference: True
+  max_new_tokens: 64
+  prompt: "Your prompt here"
+  checkpoint: "output/decoder_pre-train_60M/decoder_only_best_model.pt"
+```
+
+Then run the same command:
 
 ```bash
-cd lm-pretrain
-sh run.sh instruction-tuning
+sh run.sh setup_config.yaml
 ```
 
-```bash
-cd lm-pretrain
-sh run.sh inference
-```
+## Data Preparation
 
-> [!TIP]
-> **Accepted `type` values:**
-> `pretrain` | `pre_train` | `pre-train` |
-> `instruction-tuning` | `instruction_tuning` | `it` | `inference`
+### Pre-Training Data
 
-### Choosing Training Type
+For pretraining, you need a Hugging Face dataset with a `text` column:
 
-The training type is determined by the `--training-type` argument provided in `run.sh`.
-Depending on the selected type, the repository automatically adjusts how the dataset is prepared:
-
-- **`pre-train`** → Uses the pretraining data pipeline (`prepare_train_data`), which processes plain text datasets into token sequences.
-- **`instruction-tuning`** → Uses the instruction tuning data pipeline (`prepare_it_data`), which constructs instruction–response pairs and applies target masking.
-
-Apart from the dataset preparation logic, **the rest of the training pipeline remains identical** —
-including model forward passes, loss computation, optimization, and checkpoint saving.
-
-
-## Data Notes
-
-Currently, the repository supports two dataset types:
-
-### Pretraining Datasets
-Pretraining requires Hugging Face datasets that follow a simple text-based structure, for example:
-
-| text             |
-| ---------------- |
+| text |
+|------|
 | "örnek cümle..." |
-| ...              |
+| ... |
 
-The dataset **must contain a `"text"` field**, which is used for tokenization and language model training.
-
----
-
-### Instruction Tuning Datasets
-For instruction tuning (IT), the dataset should contain **three columns** representing the supervised fine-tuning format:
-
-| talimat (instruction) | giriş (input) | çıktı (output) |
-| ---------------------- | -------------- | --------------- |
-| "Bir e-postayı özetle." | "E-posta içeriği..." | "Kısa özet:" |
-
-The `"talimat"`, `"giriş"`, and `"çıktı"` fields are used to construct instruction–response pairs during supervised fine-tuning.
-
----
-
-> [!NOTE]
-> Both dataset types must be accessible via Hugging Face Datasets or stored locally in the same column format.
-
-### Tokenizer Training
-> [!WARNING]
-> In this version, the `--train-tokenizer` flag is not supported.
-> To enable it, you need to modify line **109** in `main.py`, along with a few additional adjustments in related components.
-
-
-If `--train-tokenizer` is enabled:
-
-- A plain `.txt` file will be generated using the specified Hugging Face dataset.
-- This text file will be used to train a SentencePiece tokenizer from scratch.
-- Tokenizer training uses the column name defined by `--text-column_name` (default: `"text"`).
-- Tokenizer input text is lowercased and ensured to end with a period.
-
-Tokenizer data preparation is handled by:
-
-```python
-prepare_tokenizer_data(hf_data_name, text_column_name, output_path)
-```
-
-
-### Pretraining Dataset Construction
-
-Instead of tokenizing the dataset during every training run,
-you can **precompute and store tokenized data as `.bin` files**, which is the recommended approach.
-This significantly reduces preprocessing time and avoids redundant tokenization overhead.
-
-Example usage:
+Tokenized data is automatically generated and cached as `.bin` files:
 
 ```python
 from transformers import AutoTokenizer
 from data_prepare import create_tokens_file
 
-tokenizer_path = "vngrs-ai/Kumru-2B"
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-
-pre_train_dataset = "canbingol/vngrs-web-corpus-200k"
+tokenizer = AutoTokenizer.from_pretrained("vngrs-ai/Kumru-2B")
 
 create_tokens_file(
-    hf_dataset=pre_train_dataset,
-    tokenizer=tokenizer,
-    base_dir="./data/pretrain",
-    tokenizer_name="kumru_tokenizer"
+    hf_dataset="canbingol/vngrs-web-corpus-500k",
+    hf_tokenizer="vngrs-ai/Kumru-2B",
+    base_dir="./data/pretrain"
 )
 ```
+
+#### Data Directory Structure
+
+```
+data/
+└── pretrain/
+    └── <tokenizer_name>/
+        ├── train_00.bin
+        ├── train_01.bin
+        ├── ...
+        └── validation_00.bin
+```
+
+### Instruction Tuning Data
+
+For instruction tuning, the dataset should have three columns:
+
+| question | input | answer |
+|----------|-------|--------|
+| "Bir e-postayı özetle." | "E-posta içeriği..." | "Kısa özet:" |
+
+The data is formatted using Kumru-2B's chat template:
+
+```
+<|start_header_id|>user<|end_header_id|>
+{question}
+<|start_header_id|>input<|end_header_id|>
+{input}
+<|start_header_id|>assistant<|end_header_id|>
+{answer}
+```
+
 > [!NOTE]
-> - During training, the script automatically checks the `saved_token_path` specified in the YAML configuration file.
->   If tokenized files already exist in that directory, they are loaded directly.
->   Otherwise, the code automatically generates and saves new tokenized `.bin` files.
-> - Update the `pre_train_dataset` variable in **`data_prepare.py`** to use your own Hugging Face dataset.
-> - The generated `.bin` files are stored under
->   `data/pretrain/<tokenizer_name>/` (for example, `data/pretrain/kumru_tokenizer/`).
-> - To change the output directory or tokenizer name, modify the `base_dir` or `tokenizer_name` arguments in the `create_tokens_file()` function.
+> Only the assistant response portion contributes to the loss during instruction tuning (target masking is applied).
+
+## Output Directory Structure
+
+```
+output/
+└── decoder_pre-train_60.00M/
+    ├── decoder_only_best_model.pt   # Best checkpoint (lowest val loss)
+    ├── train_loss.txt               # Training loss per step
+    └── validation_loss.txt          # Validation loss per eval step
+```
+
+If `force: True`, a unique directory with timestamp is created.
+
+## Training Details
+
+### Optimizer and Scheduler
+
+- **Optimizer**: AdamW with weight decay 0.1
+- **Warmup**: Linear warmup for 100 steps
+- **Decay**: Cosine annealing to minimum LR (3e-5)
+
+### Distributed Training
+
+The framework uses PyTorch DDP (DistributedDataParallel):
+
+- Backend: `nccl` (multi-GPU) or `gloo` (single GPU)
+- Launcher: `torchrun --standalone --nproc_per_node=N`
+
+### Checkpointing
+
+Checkpoints include:
+- Model state dict
+- Optimizer state dict
+- Scheduler state dict
+- Training/validation loss
+- Epoch and step information
+
+Training automatically resumes from checkpoint unless `force: True`.
+
+## Text Generation
+
+The model supports autoregressive generation with KV caching:
+
+```python
+from models.decoder_model import DecoderCausalLM, ModelConfig
+from transformers import AutoTokenizer
+import torch
+
+# Load model and tokenizer
+config = ModelConfig()
+model = DecoderCausalLM(config)
+model.load_state_dict(torch.load("checkpoint.pt")["model_state_dict"])
+tokenizer = AutoTokenizer.from_pretrained("vngrs-ai/Kumru-2B")
+
+# Generate
+prompt = tokenizer.encode("Merhaba", return_tensors="pt")
+output = model.generate(prompt, max_new_tokens=64, temperature=0.7, top_k=50)
+print(tokenizer.decode(output[0]))
+```
+
+Generation parameters:
+- `max_new_tokens`: Maximum tokens to generate
+- `temperature`: Sampling temperature (higher = more random)
+- `top_k`: Top-k sampling (limits vocabulary)
+- `use_cache`: Enable KV caching for faster generation
 
 ## Future Work
 
-The upcoming development roadmap focuses on improving code stability, modularity, and extensibility across all components of the repository. Planned enhancements include:
+- **Refactoring**: Eliminate hard-coded logic and improve maintainability
+- **RLHF Integration**: Add reinforcement learning from human feedback
+- **Multi-GPU Scaling**: Improve scaling efficiency
+- **Additional Models**: Support for more architectures
+- **Documentation**: Expand with tutorials and examples
 
-- **Refactoring the codebase** to eliminate hard-coded logic and improve overall maintainability.
-- **Stabilizing the training pipelines** for both pretraining and instruction tuning to ensure reproducibility and efficiency.
-- **Optimizing model implementations** for better computational performance and cleaner architectural design.
-- **Integrating RLHF (Reinforcement Learning from Human Feedback)** as an additional training stage for alignment.
-- **Expanding documentation**, including in-depth explanations of the training process, configuration options, and architectural components.
+The long-term goal is to create a **stable, modular, and extensible framework** for building, fine-tuning, and aligning large language models.
 
-The long-term goal is to turn this project into a **fully stable, modular, and extensible framework** for building, fine-tuning, and aligning large language models.
+## License
+
+This project is open source. Please check the repository for license details.
