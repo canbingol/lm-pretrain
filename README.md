@@ -109,6 +109,10 @@ inference:
   prompt: "merhaba"
   checkpoint: None
 
+hub:
+  push_to_hub: True
+  repo_name: canbingol/my-awesome-model
+
 train:
   model: "decoder"
   world_size: 1
@@ -136,6 +140,16 @@ data:
   pin_memory: True
 ```
 
+### Hugging Face Hub Integration
+
+To upload checkpoints and final models to Hugging Face Hub:
+
+- Set `push_to_hub=True`.
+- Provide a valid `repo_name` (e.g., `canbingol/my-awesome-model`).
+- Authenticate via CLI:
+  ```bash
+  huggingface-cli login
+  ```
 ### Configuration Parameters
 
 | Parameter | Type | Description |
@@ -155,6 +169,8 @@ data:
 | `batch_size` | `int` | Training batch size |
 | `max_seq_len` | `int` | Maximum sequence length |
 | `force` | `bool` | Force training from scratch (ignore checkpoints) |
+| `push_to_hub`  | bool | Whether to push the model and tokenizer to the Hugging Face Hub. |
+| `repo_name`    | str  | Hugging Face repository name (e.g., `canbingol/my-awesome-model`). |
 
 ## Usage
 

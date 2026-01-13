@@ -4,10 +4,12 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 import torch.nn.functional as F
+from huggingface_hub import PyTorchModelHubMixin, login
 
 try:
     from flash_attn import flash_attn_func
 except Exception:
+    print("flash_attn package is not installed, flash attention is not available.")
     flash_attn_func = None
 
 @dataclass
@@ -447,7 +449,7 @@ class DecoderModel(nn.Module):
             if use_cache:
                 next_decoder_cache += (layer_kv, )
 
-            hidden_states = self.norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
 
         if use_cache:
             return hidden_states, next_decoder_cache
@@ -455,7 +457,8 @@ class DecoderModel(nn.Module):
         return hidden_states
 
 
-class DecoderCausalLM(nn.Module):
+class DecoderCausalLM(nn.Module,
+                      PyTorchModelHubMixin):
     
     def __init__(self,config: ModelConfig):
         super().__init__()

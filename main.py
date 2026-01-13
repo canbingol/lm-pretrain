@@ -7,9 +7,11 @@ from datetime import datetime
 import torch
 from torch.distributed import init_process_group, destroy_process_group
 from transformers import AutoTokenizer
+import numpy as np
+
+from huggingface_hub import login
 
 # local modules - top-level logic
-from inference import generate
 from train.trainer import Trainer
 from data_prepare import (
     prepare_pretrain_data,
@@ -17,7 +19,6 @@ from data_prepare import (
     prepare_it_data,
 )
 from utils import (
-    load_model,
     get_config,
     TrainState,
     TrainConfig,
@@ -30,8 +31,6 @@ from utils import (
 from models.decoder_model import DecoderCausalLM, ModelConfig
 
 # Seed info
-torch.manual_seed(42)
-
 torch.manual_seed(42)
 torch.cuda.manual_seed_all(42)
 np.random.seed(42)
@@ -87,6 +86,9 @@ def main():
     EVAL_SAMPLE = int(config["train"]["eval_sample"])
     EVAL_STEPS = int(config["train"]["eval_steps"])
     LR = float(config["train"]["lr"])
+
+    PUSH_TO_HUB = bool(config["hub"]["push_to_hub"])
+    REPO_NAME = str(config["hub"]["repo_name"])
 
     SHUFFLE = bool(config["data"]["shuffle"])
     DROP_LAST = bool(config["data"]["drop_last"])
@@ -205,22 +207,17 @@ def main():
         logger.info(f"Run started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 80)
 
-    # Make inference
-    if INFERENCE:
-        if gpu_id == 0:
-            model.module = load_model(model,inference=True,checkpoint_path=checkpoint_path,device=DEVICE)
-            logger.info("Generation Response...")
-            response = generate(model, tokenizer,PROMPT , device=DEVICE, max_new_tokens=MAX_NEW_TOKENS)
-            logger.info(f"Model Response :\n{response}")
-            exit()
 
     # Prepare training data for pre-train or instruction tuning
     if TRAINING_TYPE == "pre-train":
         train_loader, val_loader = get_pretrain_data(gpu_id, TOKEN_PATH, BATCH_SIZE, SHUFFLE,
                         DROP_LAST, NUM_WORKERS, PIN_MEMORY, SINGLE_FILE, logger)
 
-    else:
+    elif TRAINING_TYPE == "instruction-tuning":
         train_loader, val_loader = get_it_data(gpu_id, tokenizer, IT_HF_DATA, BATCH_SIZE, MAX_SEQ_LEN)
+
+    else:
+        print(f"Invalid TRAINING_TYPE argument: {TRAINING_TYPE}. Valid options are: pre-train, instruction-tuning.")
 
     TRAINING_STEPS = len(train_loader) if not TRAINING_STEPS else TRAINING_STEPS
     logger.info(f"TRAINING_STEPS : {TRAINING_STEPS}")
@@ -255,6 +252,10 @@ def main():
         trainer = Trainer(train_state,data_loaders,train_config, logger)
         trainer.train()
 
+        if PUSH_TO_HUB:
+            model.push_to_hub(REPO_NAME)
+            tokenizer.push_to_hub(REPO_NAME)
+            
     except Exception as e:
         logger.exception(f"Unhandled exception: {e}")
         raise

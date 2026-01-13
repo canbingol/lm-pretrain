@@ -117,7 +117,7 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, max_seq_len=512, pad_
             dataset = train_dataset,
             sampler = DistributedSampler(dataset=train_dataset, drop_last=True, shuffle=True),
             batch_size = batch_size,
-            shuffle = shuffle,
+            shuffle = False,
             drop_last = drop_last,
             num_workers = num_workers,
             pin_memory = pin_memory
@@ -127,7 +127,7 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, max_seq_len=512, pad_
             dataset = val_dataset,
             sampler = DistributedSampler(dataset=val_dataset, drop_last=True, shuffle=True),
             batch_size = batch_size,
-            shuffle = shuffle,
+            shuffle = False,
             drop_last = drop_last,
             num_workers = num_workers,
             pin_memory = pin_memory

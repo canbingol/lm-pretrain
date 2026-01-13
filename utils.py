@@ -30,21 +30,6 @@ class TrainState:
     checkpoint_path: str
     tokenizer: AutoModel
 
-def load_model(model,inference,checkpoint_path, device,optimizer=None,scheduler=None):
-    checkpoint = torch.load(checkpoint_path,map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-
-    if inference:
-        return model.to(device)
-
-    train_loss  = checkpoint["train_loss"]
-    val_loss    = checkpoint["val_loss"]
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-
-    print(f"Checkpoint train loss : {train_loss} | validation loss : {val_loss}")
-    return model, optimizer,scheduler
-
 def clear_gpu_memory():
     gc.collect()
     if torch.cuda.is_available():

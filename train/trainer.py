@@ -65,18 +65,14 @@ class Trainer:
         scheduler_decay = CosineAnnealingLR(optimizer, T_max=training_steps - warmup_steps, eta_min=min_lr)
         scheduler = SequentialLR(optimizer, schedulers=[scheduler_warmup, scheduler_decay], milestones=[warmup_steps])
         if checkpoint_path  and os.path.exists(checkpoint_path) and not force and gpu_id == 0:
-            loc = f"cuda:{gpu_id}"
-            snapshot = torch.load(checkpoint_path, map_location=loc)
-            model.module.load_state_dict(snapshot["model_state_dict"])
-            optimizer.load_state_dict(snapshot["optimizer_state_dict"])
-            scheduler.load_state_dict(snapshot["scheduler_state_dict"])
+            model = model.module.from_pretrained(checkpoint_path)
+
             logger.info(f"GPU {gpu_id}: Resuming training from snapshot.")
 
         train_losses, val_losses, track_tokens_seen = [],[],[]
         token_seen , global_step = 0, -1
 
         best_val_loss = float("inf")
-
         for epoch in range(num_epochs):
             model.train()
             torch.autograd.set_detect_anomaly(True)
@@ -130,16 +126,7 @@ class Trainer:
 
                         if val_loss < best_val_loss:
                             best_val_loss = val_loss
-                            torch.save({
-                        "epoch": epoch,
-                        "step":global_step,
-                        "model_state_dict": model.module.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "scheduler_state_dict": scheduler.state_dict(),
-                        "train_loss": loss,
-                        "val_loss": val_loss
-                    },f"{output_path}/{model.module.name}_best_model.pt")
-
+                            model.module.save_pretrained(f"{output_path}/{model.module.name}_best_model")
             clear_gpu_memory()
 
         end_time = time.time()

@@ -4,6 +4,10 @@ inference:
   prompt: "merhaba"
   checkpoint: None
 
+hub:
+  push_to_hub: True
+  repo_name: canbingol/my-awesome-model
+
 train:
   model: "decoder"
   world_size: 1
