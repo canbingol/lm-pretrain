@@ -19,7 +19,7 @@ class ModelConfig:
     attention_dropout: float = 0.0
     bos_token_id: int = 151643
     eos_token_id: int = 151645
-    head_dim: int = 128
+    head_dim: int = 32
     hidden_act: str = "silu"
     hidden_size: int = 512
     initializer_range: float = 0.02
@@ -39,7 +39,7 @@ class ModelConfig:
     use_cache: bool = True
     use_sliding_window: bool = False
     vocab_size: int = 50176
-    attn_type = "flash_attn"
+    attn_type = "eager"
 
 
 def repeat_kv(x: torch.tensor, n_rep: int) -> torch.tensor:
@@ -106,7 +106,7 @@ class Attention(nn.Module):
         std = out.std().item()
         maxv = out_abs.max().item()
 
-        print(f"p99: {p99} | p999: {p999} | mean: {mean} | std: {std} | maxv: {maxv} |")
+        #print(f"p99: {p99} | p999: {p999} | mean: {mean} | std: {std} | maxv: {maxv} |")
         return out
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal_mask: torch.Tensor | None):
@@ -230,6 +230,11 @@ class SelfAttention(nn.Module):
             v = v.view(v.shape[0], v.shape[1], self.num_kv_heads, self.head_dim)
 
             q, k = self.rotary_emb(positions, q, k)
+            
+            n_rep = self.num_heads // self.num_kv_heads
+
+            k = repeat_kv(x=k, n_rep=n_rep)
+            v = repeat_kv(x=v, n_rep=n_rep)
 
             if self.attn_type == "sdpa" or self.attn_type == "eager":
                 q = q.transpose(1,2)
@@ -253,10 +258,6 @@ class SelfAttention(nn.Module):
 
             assert self.num_heads % self.num_kv_heads == 0
 
-            n_rep = self.num_heads // self.num_kv_heads
-
-            k = repeat_kv(x=k, n_rep=n_rep)
-            v = repeat_kv(x=v, n_rep=n_rep)
 
             mask = self._get_causal_mask(lq, lk, device=q.device)
             

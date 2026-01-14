@@ -24,7 +24,7 @@ data:
   pretraining_hf_data: "canbingol/vngrs-web-corpus-500k"
   it_hf_data: "canbingol/turkish_instructions"
   text_column_name: "text"
-  token_path: "./data/pretrain/default_tokenizer"
+  token_path: "./data/pretrain/default_tokenizer/Kumru-2B"
 
   tokens_chunks_size: 25000000
   test_split: 0.05

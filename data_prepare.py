@@ -14,7 +14,7 @@ from utils import format_it_data
 def create_tokens_file(hf_dataset: str ,hf_tokenizer, base_dir: str="./data/pretrain",test_split: int= 0.05,
                        tokens_chunks_size: int = 25_000_000, dtype: str = np.uint16, gpu_id: int= 0):
     
-    tokenizer_name = hf_tokenizer.split("/")
+    tokenizer_name = hf_tokenizer.split("/")[1]
     tokenizer = AutoTokenizer.from_pretrained(hf_tokenizer)
 
     save_dir = f"{base_dir}/{tokenizer_name}"
