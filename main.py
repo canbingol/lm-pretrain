@@ -256,14 +256,23 @@ def main():
 
         if PUSH_TO_HUB:
             api = HfApi()
+
+            model.push_to_hub(REPO_NAME)
+            tokenizer.push_to_hub(REPO_NAME)
+            
             api.upload_folder(
                 folder_path=OUTPUT_PATH,          
                 path_in_repo="logs",         
                 repo_id=REPO_NAME,           
                 repo_type="model",                
             )
-            model.push_to_hub(REPO_NAME)
-            tokenizer.push_to_hub(REPO_NAME)
+            api.upload_file(
+                path_or_fileobj="./setup_config.yaml",
+                path_in_repo="setup_config.yaml",
+                repo_id=REPO_NAME,
+                repo_type="model",
+            )
+
             
     except Exception as e:
         logger.exception(f"Unhandled exception: {e}")

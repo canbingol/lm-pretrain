@@ -10,7 +10,7 @@ hub:
 
 train:
   model: "decoder"
-  attn: "eager"
+  attn: "sdpa"
   world_size: 1
   force: False
   model_info: True
