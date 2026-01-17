@@ -10,21 +10,21 @@ hub:
 
 train:
   model: "decoder"
+  attn: "eager"
   world_size: 1
   force: False
   model_info: True
   training_type: pre-train 
-  epoch: 5
+  epoch: 1
   lr: 1e-4
   eval_steps: 10
   eval_sample: 1
-
 data:
   hf_tokenizer: "vngrs-ai/Kumru-2B"
   pretraining_hf_data: "canbingol/vngrs-web-corpus-500k"
   it_hf_data: "canbingol/turkish_instructions"
   text_column_name: "text"
-  token_path: "./data/pretrain/default_tokenizer/Kumru-2B"
+  token_path: "./data/pretrain/default_tokenizer"
 
   tokens_chunks_size: 25000000
   test_split: 0.05

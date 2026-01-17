@@ -9,7 +9,7 @@ from torch.distributed import init_process_group, destroy_process_group
 from transformers import AutoTokenizer
 import numpy as np
 
-from huggingface_hub import login
+from huggingface_hub import login, HfApi
 
 # local modules - top-level logic
 from train.trainer import Trainer
@@ -86,10 +86,10 @@ def main():
     EVAL_SAMPLE = int(config["train"]["eval_sample"])
     EVAL_STEPS = int(config["train"]["eval_steps"])
     LR = float(config["train"]["lr"])
+    ATTN_TYPE = str(config["train"]["attn"])
 
     PUSH_TO_HUB = bool(config["hub"]["push_to_hub"])
     REPO_NAME = str(config["hub"]["repo_name"])
-
     SHUFFLE = bool(config["data"]["shuffle"])
     DROP_LAST = bool(config["data"]["drop_last"])
     NUM_WORKERS = int(config["data"]["num_workers"])
@@ -154,13 +154,13 @@ def main():
 
     config.vocab_size = VOCAB_SIZE
     config.batch_size = BATCH_SIZE
+    config.attn_type = ATTN_TYPE
 
     gpu_id = int(os.environ["LOCAL_RANK"])
     DEVICE = torch.device(f"cuda:{gpu_id}")
     config.device = DEVICE
     log_name = f"train_{MODEL}_{TRAINING_TYPE}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-    logger = setup_logger(rank=gpu_id, filename=log_name)
 
     model = ModelClass(config).to(DEVICE)
     model = model.to(actual_dtype)   
@@ -175,6 +175,8 @@ def main():
             OUTPUT_PATH = f"output/{MODEL}_{TRAINING_TYPE}_{n_params/1e6:.2f}M"
 
         OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
+
+    logger = setup_logger(rank=gpu_id, log_dir=OUTPUT_PATH, filename=log_name)
 
     os.makedirs(OUTPUT_PATH, exist_ok=True)
     tokenizer = AutoTokenizer.from_pretrained(HF_TOKENIZER)
@@ -253,6 +255,13 @@ def main():
         trainer.train()
 
         if PUSH_TO_HUB:
+            api = HfApi()
+            api.upload_folder(
+                folder_path=OUTPUT_PATH,          
+                path_in_repo="logs",         
+                repo_id=REPO_NAME,           
+                repo_type="model",                
+            )
             model.push_to_hub(REPO_NAME)
             tokenizer.push_to_hub(REPO_NAME)
             
