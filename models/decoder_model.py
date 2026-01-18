@@ -75,6 +75,7 @@ class Attention(nn.Module):
     def _eager_attn(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal_mask: torch.Tensor, dropout_p: float):
         
         scores = q @ k.transpose(-2, -1) * self.scale
+
         scores = scores.masked_fill(causal_mask, float("-inf"))
 
         attn_weight = torch.softmax(scores, dim=-1)
@@ -82,10 +83,6 @@ class Attention(nn.Module):
         if not torch.isfinite(attn_weight).all():
             raise RuntimeError("Non-Finite values in attention weights")
         
-        row_sum = attn_weight.sum(dim=-1)
-        if not torch.allclose(row_sum, torch.ones_like(row_sum), atol=1e-3):
-            print("Warning: attention rows do not sum to 1")
-
         if (attn_weight < 0).any():
             raise RuntimeError("Negative values in attention weights")
 
@@ -99,14 +96,6 @@ class Attention(nn.Module):
         if out_max > 100:
             print(f"Warning: attention output magnitude too large: {out_max}")
 
-        out_abs = out.abs().to(torch.float32)
-        p99 = torch.quantile(out_abs, 0.99).item()
-        p999 = torch.quantile(out_abs, 0.999).item()
-        mean = out.mean().item()
-        std = out.std().item()
-        maxv = out_abs.max().item()
-
-        #print(f"p99: {p99} | p999: {p999} | mean: {mean} | std: {std} | maxv: {maxv} |")
         return out
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal_mask: torch.Tensor | None):
