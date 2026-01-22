@@ -59,9 +59,6 @@ def prepare_pretrain_data(token_file_data_dir, batch_size, max_seq_len=512, pad_
             # use only mode files
             data_files = [f for f in os.listdir(exist_data_dir) if f.startswith(mode)]
 
-            if single_file is not None:
-                data_files = [data_files[single_file]]
-
             self.input_ids, self.target_ids = [], []
             bar = tqdm(data_files, total= len(data_files), desc=f"iterating {mode} files") if gpu_id == 0 else data_files
             for file in bar:
