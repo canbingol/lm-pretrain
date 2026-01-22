@@ -1,6 +1,5 @@
 # stdlib
 import os
-import platform
 from datetime import datetime
 
 # third-party
@@ -19,6 +18,7 @@ from data_prepare import (
     prepare_it_data,
 )
 from utils import (
+    write_logs,
     TrainState,
     TrainConfig,
     DataLoaders,
@@ -74,13 +74,7 @@ def main():
 
     cfg = get_config()
 
-# config: YAML'dan load edilmiş dict
-
-
     checkpoint_path = cfg.train.checkpoint
-
-    checkpoint_path = str(checkpoint_path) if checkpoint_path is not None else None
-
 
     ddp_setup(cfg.train.world_size)
 
@@ -117,20 +111,18 @@ def main():
 
     log_name = f"train_{cfg.train.model}_{cfg.train.training_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-
     model = ModelClass(config).to(DEVICE)
     model = model.to(actual_dtype)   
 
-    if gpu_id == 0:
-        n_params = sum(p.numel() for p in model.parameters())
-        n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    n_params = sum(p.numel() for p in model.parameters())
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        if cfg.train.force:
-            OUTPUT_PATH = f"output/{cfg.train.model}/{cfg.train.training_type}/{n_params/1e6:.2f}M_force"
-        else:
-            OUTPUT_PATH = f"output/{cfg.train.model}_{cfg.train.training_type}_{n_params/1e6:.2f}M"
+    if cfg.train.force:
+        OUTPUT_PATH = f"output/{cfg.train.model}/{cfg.train.training_type}/{n_params/1e6:.2f}M_force"
+    else:
+        OUTPUT_PATH = f"output/{cfg.train.model}_{cfg.train.training_type}_{n_params/1e6:.2f}M"
 
-        OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
+    OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
 
     logger = setup_logger(rank=gpu_id, log_dir=OUTPUT_PATH, filename=log_name)
 
@@ -139,31 +131,7 @@ def main():
 
 
     if gpu_id == 0:
-
-        logger.info("=" * 80)
-        logger.info(f"Python: {platform.python_version()}, PyTorch: {torch.__version__}")
-        logger.info(f"OS: {platform.system()} {platform.release()}")
-        logger.info(f"CUDA device count: {torch.cuda.device_count()}")
-        logger.info(f"GPU name: {torch.cuda.get_device_name(gpu_id)}")
-        logger.info(f"GPU memory: {torch.cuda.get_device_properties(gpu_id).total_memory / 1e9:.2f} GB")
-        logger.info(f"Model: {cfg.train.model}")
-        logger.info(f"Dtype: {actual_dtype}")
-        logger.info(f"Config name: {config.config_name}")
-        logger.info(f"Vocab size: {cfg.model.vocab_size}")
-        logger.info(f"Trainable params: {n_trainable/1e6:.2f}M / Total: {n_params/1e6:.2f}M")
-        logger.info(f"Device: {DEVICE}")
-        logger.info(f"Output path: {OUTPUT_PATH}")
-        logger.info(f"Training type: {cfg.train.training_type}")
-        logger.info(f"Epochs: {cfg.train.epoch}, Batch size: {cfg.data.batch_size}, cfg.train.lr: {cfg.train.lr}")
-        logger.info(f"Eval every: {cfg.train.eval_steps} steps, Eval sample: {cfg.train.eval_sample}")
-        logger.info(f"Num workers: {cfg.data.num_workers}, Pin memory: {cfg.data.pin_memory}")
-        logger.info(f"Shuffle: {cfg.data.shuffle}, Drop last: {cfg.data.drop_last}")
-        logger.info(f"Tokenizer: {cfg.data.hf_tokenizer}")
-        logger.info(f"Checkpoint path: {checkpoint_path}")
-        logger.info(f"Dataset source: {cfg.data.pretraining_hf_data if cfg.train.training_type == 'pre-train' else cfg.data.it_hf_data}")
-
-        logger.info(f"Run started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("=" * 80)
+        write_logs(logger, cfg, actual_dtype, config,n_trainable ,n_params, DEVICE, OUTPUT_PATH, checkpoint_path, gpu_id)
 
 
     # Prepare training data for pre-train or instruction tuning

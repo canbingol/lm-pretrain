@@ -17,7 +17,7 @@ def create_tokens_file(hf_dataset: str ,hf_tokenizer, base_dir: str="./data/pret
     tokenizer_name = hf_tokenizer.split("/")[1]
     tokenizer = AutoTokenizer.from_pretrained(hf_tokenizer)
 
-    save_dir = f"{base_dir}/{tokenizer_name}"
+    save_dir = base_dir
     os.makedirs(save_dir, exist_ok=True)
     mode = "train"
     data = load_dataset(hf_dataset, split="train")

@@ -112,7 +112,7 @@ class Trainer:
                         val_loss, generated_text = evaluate_model(
                             model, tokenizer, val_loader, device, eval_sample, val_loss_file
                         )
-                        print(f"Model generated text: {generated_text}")
+                        logger.info(f"Model generated text: {generated_text}")
                         with open(generated_text_file, "a") as f:
                             f.write(f"{global_step}, {generated_text}\n")
                         val_losses.append(val_loss)

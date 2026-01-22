@@ -1,8 +1,7 @@
 import os, gc
-import yaml
+import platform
 import logging
-import argparse
-import yaml
+from datetime import datetime
 from dataclasses import dataclass
 
 import torch
@@ -87,3 +86,43 @@ def get_unique_filename(path):
         new_path = f"{path}_{counter}"
         counter += 1
     return new_path
+
+
+def write_logs(logger, cfg, actual_dtype, config,n_trainable ,n_params, DEVICE, OUTPUT_PATH, checkpoint_path, gpu_id):
+        
+        logger.info("=" * 80)
+        logger.info("*** General Info ***")
+        logger.info(f"Python: {platform.python_version()}, PyTorch: {torch.__version__}")
+        logger.info(f"OS: {platform.system()} {platform.release()}")
+        logger.info(f"CUDA Device Count: {torch.cuda.device_count()}")
+        logger.info(f"GPU Name: {torch.cuda.get_device_name(gpu_id)}")
+        logger.info(f"GPU Memory: {torch.cuda.get_device_properties(gpu_id).total_memory / 1e9:.2f} GB")
+        logger.info(f"Device: {DEVICE}")
+        logger.info(f"Output Path: {OUTPUT_PATH}")
+        logger.info(f"Training Type: {cfg.train.training_type}")
+        logger.info(f"Epochs: {cfg.train.epoch}, Batch size: {cfg.data.batch_size}, Learning Rate: {cfg.train.lr}")
+        logger.info(f"Eval Every: {cfg.train.eval_steps} Steps, Eval Sample: {cfg.train.eval_sample}")
+        logger.info(f"Num Workers: {cfg.data.num_workers}, Pin Memory: {cfg.data.pin_memory}")
+        logger.info(f"Shuffle: {cfg.data.shuffle}, Drop Last: {cfg.data.drop_last}")
+        logger.info(f"Tokenizer: {cfg.data.hf_tokenizer}")
+        logger.info(f"Checkpoint Path: {checkpoint_path}")
+        logger.info(f"Dataset Source: {cfg.data.pretraining_hf_data if cfg.train.training_type == 'pre-train' else cfg.data.it_hf_data}")
+        logger.info("")
+        logger.info("*** Model Info ***")
+        logger.info(f"Model: {cfg.train.model}")
+        logger.info(f"Config Name: {config.config_name}")
+        logger.info(f"Dtype: {actual_dtype}")
+        logger.info(f"Trainable Params: {n_trainable/1e6:.2f}M / Total: {n_params/1e6:.2f}M")
+        
+        logger.info(f"Vocab Size: {cfg.model.vocab_size}")
+        logger.info(f"Intermediate Size: {cfg.model.intermediate_size}")
+        logger.info(f"Head Dim : {cfg.model.head_dim}")
+        logger.info(f"Hidden Size: {cfg.model.hidden_size}")
+        logger.info(f"Number of Attention Heads: {cfg.model.num_attention_heads}")
+        logger.info(f"Number of Hidden Layers: {cfg.model.num_hidden_layers}")
+        logger.info(f"Number of KV heads: {cfg.model.num_key_value_heads}")
+        logger.info(f"Attention Type: {cfg.model.attn_type}")
+        logger.info(f"Torch Dtype: {cfg.model.torch_dtype}")
+
+        logger.info(f"Run started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 80)
