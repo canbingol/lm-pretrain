@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoModel
+
 @dataclass(frozen=True)
 class TrainConfig:
     num_epochs: int
@@ -36,19 +37,6 @@ def clear_gpu_memory():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
 
-
-def get_config():
-    parser = argparse.ArgumentParser()
-    # model choosing
-    parser.add_argument("--config", type=str, help="Path to YAML config file")
-
-    args = parser.parse_args()
-    path = args.config
-
-    with open(path) as stream:
-        configs = yaml.safe_load(stream=stream)
-
-    return configs
 
 def format_it_data(query: str, input: str, answer: str) -> str:
     """

@@ -14,33 +14,33 @@ except Exception:
 
 @dataclass
 class ModelConfig:
+    
     config_name: str = "decoder_only"
+    model_type: str = "decoder"
+
     attention_bias: bool = False
     attention_dropout: float = 0.0
     bos_token_id: int = 151643
     eos_token_id: int = 151645
-    head_dim: int = 32
-    hidden_act: str = "silu"
-    hidden_size: int = 512
-    initializer_range: float = 0.02
+
     intermediate_size: int = 3072
-    max_position_embeddings: int = 40960    
-    max_window_layers: int = 28
-    model_type: str = "decoder"
+    hidden_act: str = "silu"
+
+    head_dim: int = 32
+    hidden_size: int = 512
     num_attention_heads: int = 16
     num_hidden_layers: int = 1
     num_key_value_heads: int = 8
+    vocab_size: int = 50176
+    max_position_embeddings: int = 40960    
+
     rms_norm_eps: float = 1e-6
     rope_scaling: None = None
     rope_theta: int = 1000000
-    sliding_window: None = None
-    tie_word_embeddings: bool = True
-    torch_dtype: str = "bfloat16"
-    use_cache: bool = True
-    use_sliding_window: bool = False
-    vocab_size: int = 50176
-    attn_type = "eager"
 
+    use_cache: bool = True
+    attn_type = "eager"
+    torch_dtype = "bfloat16"
 
 def repeat_kv(x: torch.tensor, n_rep: int) -> torch.tensor:
     batch_size, seq_len, n_kv_heads, head_dim = x.shape
@@ -102,6 +102,7 @@ class Attention(nn.Module):
         dropout_p = self.dropout_p if self.training else 0.0
 
         if self.attn_type == "flash_attn":
+            assert flash_attn_func is not None, "For using flash attention install flash_attn (pip install flash_attn)"
             attn_output = flash_attn_func(
                 q, k, v,
                 dropout_p=dropout_p, 

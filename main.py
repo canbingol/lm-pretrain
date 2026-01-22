@@ -19,13 +19,14 @@ from data_prepare import (
     prepare_it_data,
 )
 from utils import (
-    get_config,
     TrainState,
     TrainConfig,
     DataLoaders,
     setup_logger,
-    get_unique_filename
+    get_unique_filename,
 )
+
+from configs.loader import set_config, get_config
 
 # model registry - separated by domain
 from models.decoder_model import DecoderCausalLM, ModelConfig
@@ -71,69 +72,26 @@ def get_it_data(gpu_id, tokenizer, IT_HF_DATA, BATCH_SIZE, MAX_SEQ_LEN):
 
 def main():
 
-    config = get_config()
+    cfg = get_config()
 
 # config: YAML'dan load edilmiş dict
 
-    WORLD_SIZE = int(config["train"]["world_size"])
-    TRAINING_TYPE = str(config["train"]["training_type"])
-    MODEL = str(config["train"]["model"])
 
-    VOCAB_SIZE = int(config["data"]["vocab_size"])
-    BATCH_SIZE = int(config["data"]["batch_size"])
-    EPOCH = int(config["train"]["epoch"])
-
-    EVAL_SAMPLE = int(config["train"]["eval_sample"])
-    EVAL_STEPS = int(config["train"]["eval_steps"])
-    LR = float(config["train"]["lr"])
-    ATTN_TYPE = str(config["train"]["attn"])
-
-    PUSH_TO_HUB = bool(config["hub"]["push_to_hub"])
-    REPO_NAME = str(config["hub"]["repo_name"])
-    SHUFFLE = bool(config["data"]["shuffle"])
-    DROP_LAST = bool(config["data"]["drop_last"])
-    NUM_WORKERS = int(config["data"]["num_workers"])
-    PIN_MEMORY = bool(config["data"]["pin_memory"])
-
-    SINGLE_FILE = str(config["data"]["single_file"]) if config["data"].get("single_file") is not None else None
-
-    TEST_SPLIT = int(config["data"]["test_split"])
-    TOKENS_CHUNK_SIZE = int(config["data"]["tokens_chunks_size"])
-    TOKEN_DTYPE = str(config["data"]["token_dtype"])
-    PRE_TRAINING_HF_DATA = str(config["data"]["pretraining_hf_data"])
-    IT_HF_DATA = str(config["data"]["it_hf_data"])
-    HF_TOKENIZER = str(config["data"]["hf_tokenizer"])
-
-    FORCE = bool(config["train"]["force"])
-
-    INFERENCE = bool(config["inference"]["inference"])
-    PROMPT = str(config["inference"]["prompt"])
-    MAX_NEW_TOKENS = int(config["inference"]["max_new_tokens"])
-
-    MAX_SEQ_LEN = int(config["data"]["max_seq_len"])
-
-    TRAINING_STEPS = config["train"].get("training_steps", None)
-    TRAINING_STEPS = int(TRAINING_STEPS) if TRAINING_STEPS is not None else None
-    
-    # checkpoint_path: INFERENCE'a göre seç
-    if INFERENCE:
-        checkpoint_path = config["inference"].get("checkpoint", None)
-    else:
-        checkpoint_path = config["train"].get("checkpoint", None)
+    checkpoint_path = cfg.train.checkpoint
 
     checkpoint_path = str(checkpoint_path) if checkpoint_path is not None else None
 
 
-    ddp_setup(WORLD_SIZE)
+    ddp_setup(cfg.train.world_size)
 
     TOKEN_PATH = None
-    if TRAINING_TYPE == "pre-train":
-        TOKEN_PATH = str(config["data"]["token_path"])
+    if cfg.train.training_type == "pre-train":
+        TOKEN_PATH = str(cfg.data.token_path)
 
     # If given saved token path not exist create .bin files with given hf dataset
-    if TRAINING_TYPE != "pre-train" or TOKEN_PATH is None or not os.path.exists(TOKEN_PATH) or len(os.listdir(TOKEN_PATH)) == 0:
-        TOKEN_PATH = create_tokens_file(hf_dataset=PRE_TRAINING_HF_DATA, hf_tokenizer=HF_TOKENIZER, base_dir=TOKEN_PATH,
-                                               test_split=TEST_SPLIT, tokens_chunks_size=TOKENS_CHUNK_SIZE, dtype=TOKEN_DTYPE)
+    if cfg.train.training_type != "pre-train" or TOKEN_PATH is None or not os.path.exists(TOKEN_PATH) or len(os.listdir(TOKEN_PATH)) == 0:
+        TOKEN_PATH = create_tokens_file(hf_dataset=cfg.data.pretraining_hf_data, hf_tokenizer=cfg.data.hf_tokenizer, base_dir=TOKEN_PATH,
+                                               test_split=cfg.data.test_split, tokens_chunks_size=cfg.data.tokens_chunks_size, dtype=cfg.data.token_dtype)
 
 
     model_map = {
@@ -148,18 +106,16 @@ def main():
     "bfloat16": torch.bfloat16
 }
 
-    ConfigClass, ModelClass = model_map[MODEL]
+    ConfigClass, ModelClass = model_map[cfg.train.model]
     config = ConfigClass()
+    set_config(config, cfg.model)
     actual_dtype = dtype_map.get(config.torch_dtype, torch.float32)
-
-    config.vocab_size = VOCAB_SIZE
-    config.batch_size = BATCH_SIZE
-    config.attn_type = ATTN_TYPE
 
     gpu_id = int(os.environ["LOCAL_RANK"])
     DEVICE = torch.device(f"cuda:{gpu_id}")
     config.device = DEVICE
-    log_name = f"train_{MODEL}_{TRAINING_TYPE}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+    log_name = f"train_{cfg.train.model}_{cfg.train.training_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
 
     model = ModelClass(config).to(DEVICE)
@@ -169,17 +125,18 @@ def main():
         n_params = sum(p.numel() for p in model.parameters())
         n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        if FORCE:
-            OUTPUT_PATH = f"output/{MODEL}/{TRAINING_TYPE}/{n_params/1e6:.2f}M_force"
+        if cfg.train.force:
+            OUTPUT_PATH = f"output/{cfg.train.model}/{cfg.train.training_type}/{n_params/1e6:.2f}M_force"
         else:
-            OUTPUT_PATH = f"output/{MODEL}_{TRAINING_TYPE}_{n_params/1e6:.2f}M"
+            OUTPUT_PATH = f"output/{cfg.train.model}_{cfg.train.training_type}_{n_params/1e6:.2f}M"
 
         OUTPUT_PATH = get_unique_filename(OUTPUT_PATH)
 
     logger = setup_logger(rank=gpu_id, log_dir=OUTPUT_PATH, filename=log_name)
 
     os.makedirs(OUTPUT_PATH, exist_ok=True)
-    tokenizer = AutoTokenizer.from_pretrained(HF_TOKENIZER)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.data.hf_tokenizer)
+
 
     if gpu_id == 0:
 
@@ -189,37 +146,38 @@ def main():
         logger.info(f"CUDA device count: {torch.cuda.device_count()}")
         logger.info(f"GPU name: {torch.cuda.get_device_name(gpu_id)}")
         logger.info(f"GPU memory: {torch.cuda.get_device_properties(gpu_id).total_memory / 1e9:.2f} GB")
-        logger.info(f"Model: {MODEL}")
+        logger.info(f"Model: {cfg.train.model}")
         logger.info(f"Dtype: {actual_dtype}")
         logger.info(f"Config name: {config.config_name}")
-        logger.info(f"Vocab size: {VOCAB_SIZE}")
+        logger.info(f"Vocab size: {cfg.model.vocab_size}")
         logger.info(f"Trainable params: {n_trainable/1e6:.2f}M / Total: {n_params/1e6:.2f}M")
         logger.info(f"Device: {DEVICE}")
         logger.info(f"Output path: {OUTPUT_PATH}")
-        logger.info(f"Training type: {TRAINING_TYPE}")
-        logger.info(f"Epochs: {EPOCH}, Batch size: {BATCH_SIZE}, LR: {LR}")
-        logger.info(f"Eval every: {EVAL_STEPS} steps, Eval sample: {EVAL_SAMPLE}")
-        logger.info(f"Num workers: {NUM_WORKERS}, Pin memory: {PIN_MEMORY}")
-        logger.info(f"Shuffle: {SHUFFLE}, Drop last: {DROP_LAST}")
-        logger.info(f"Training steps: {TRAINING_STEPS or 'auto (len(train_loader))'}")
-        logger.info(f"Tokenizer: {HF_TOKENIZER}")
+        logger.info(f"Training type: {cfg.train.training_type}")
+        logger.info(f"Epochs: {cfg.train.epoch}, Batch size: {cfg.data.batch_size}, cfg.train.lr: {cfg.train.lr}")
+        logger.info(f"Eval every: {cfg.train.eval_steps} steps, Eval sample: {cfg.train.eval_sample}")
+        logger.info(f"Num workers: {cfg.data.num_workers}, Pin memory: {cfg.data.pin_memory}")
+        logger.info(f"Shuffle: {cfg.data.shuffle}, Drop last: {cfg.data.drop_last}")
+        logger.info(f"Tokenizer: {cfg.data.hf_tokenizer}")
         logger.info(f"Checkpoint path: {checkpoint_path}")
-        logger.info(f"Dataset source: {PRE_TRAINING_HF_DATA if TRAINING_TYPE == 'pre-train' else IT_HF_DATA}")
+        logger.info(f"Dataset source: {cfg.data.pretraining_hf_data if cfg.train.training_type == 'pre-train' else cfg.data.it_hf_data}")
 
         logger.info(f"Run started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 80)
 
 
     # Prepare training data for pre-train or instruction tuning
-    if TRAINING_TYPE == "pre-train":
-        train_loader, val_loader = get_pretrain_data(gpu_id, TOKEN_PATH, BATCH_SIZE, SHUFFLE,
-                        DROP_LAST, NUM_WORKERS, PIN_MEMORY, SINGLE_FILE, logger)
+    if cfg.train.training_type == "pre-train":
+        train_loader, val_loader = get_pretrain_data(gpu_id, TOKEN_PATH, cfg.data.batch_size, cfg.data.shuffle,
+                        cfg.data.drop_last, cfg.data.num_workers, cfg.data.pin_memory, False, logger)
 
-    elif TRAINING_TYPE == "instruction-tuning":
-        train_loader, val_loader = get_it_data(gpu_id, tokenizer, IT_HF_DATA, BATCH_SIZE, MAX_SEQ_LEN)
+    elif cfg.train.training_type == "instruction-tuning":
+        train_loader, val_loader = get_it_data(gpu_id, tokenizer, cfg.data.it_hf_data, cfg.data.batch_size, cfg.data.max_seq_len)
 
     else:
-        print(f"Invalid TRAINING_TYPE argument: {TRAINING_TYPE}. Valid options are: pre-train, instruction-tuning.")
+        print(f"Invalid cfg.train.training_type argument: {cfg.train.training_type}. Valid options are: pre-train, instruction-tuning.")
+
+    TRAINING_STEPS = cfg.train.training_steps
 
     TRAINING_STEPS = len(train_loader) if not TRAINING_STEPS else TRAINING_STEPS
     logger.info(f"TRAINING_STEPS : {TRAINING_STEPS}")
@@ -239,14 +197,14 @@ def main():
     )
 
     train_config = TrainConfig(
-        num_epochs=EPOCH,
+        num_epochs=cfg.train.epoch,
         training_steps=TRAINING_STEPS,
-        eval_steps=EVAL_STEPS,
-        eval_sample=EVAL_SAMPLE,
-        learning_rate=LR,
+        eval_steps=cfg.train.eval_steps,
+        eval_sample=cfg.train.eval_sample,
+        learning_rate=cfg.train.lr,
         device=gpu_id,
         output_path=OUTPUT_PATH,
-        force=FORCE,
+        force=cfg.train.force,
     )
 
     # Start training
@@ -254,25 +212,30 @@ def main():
         trainer = Trainer(train_state,data_loaders,train_config, logger)
         trainer.train()
 
-        if PUSH_TO_HUB:
+        if cfg.hub.push_to_hub:
             api = HfApi()
 
-            model.push_to_hub(REPO_NAME)
-            tokenizer.push_to_hub(REPO_NAME)
+            model.push_to_hub(cfg.hub.repo_name)
+            tokenizer.push_to_hub(cfg.hub.repo_name)
             
             api.upload_folder(
                 folder_path=OUTPUT_PATH,          
-                path_in_repo="logs",         
-                repo_id=REPO_NAME,           
+                path_in_repo="logs_and_best-model",         
+                repo_id=cfg.hub.repo_name,           
                 repo_type="model",                
             )
             api.upload_file(
-                path_or_fileobj="./setup_config.yaml",
+                path_or_fileobj="./config/setup_config.yaml",
                 path_in_repo="setup_config.yaml",
-                repo_id=REPO_NAME,
+                repo_id=cfg.hub.repo_name,
                 repo_type="model",
             )
-
+            api.upload_file(
+                path_or_fileobj="./models/decoder_model.py",
+                path_in_repo="model.py",
+                repo_id=cfg.hub.repo_name,
+                repo_type="model",
+            )
             
     except Exception as e:
         logger.exception(f"Unhandled exception: {e}")
