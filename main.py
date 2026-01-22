@@ -147,7 +147,9 @@ def main():
 
     TRAINING_STEPS = cfg.train.training_steps
 
-    TRAINING_STEPS = len(train_loader) if not TRAINING_STEPS else TRAINING_STEPS
+    if TRAINING_STEPS > len(train_loader) or TRAINING_STEPS is None:
+        TRAINING_STEPS = len(train_loader)
+
     logger.info(f"TRAINING_STEPS : {TRAINING_STEPS}")
     logger.info(f"train loader lenght: {len(train_loader)}")
     logger.info(f"validaiton loader lenght: {len(val_loader)}")
@@ -193,7 +195,7 @@ def main():
                 repo_type="model",                
             )
             api.upload_file(
-                path_or_fileobj="./config/setup_config.yaml",
+                path_or_fileobj="./configs/setup_config.yaml",
                 path_in_repo="setup_config.yaml",
                 repo_id=cfg.hub.repo_name,
                 repo_type="model",
