@@ -87,6 +87,7 @@ class Trainer:
         token_seen , global_step = 0, -1
 
         best_val_loss = float("inf")
+        total_tokens = 0
         for epoch in range(num_epochs):
             model.train()
             torch.autograd.set_detect_anomaly(True)
@@ -115,7 +116,6 @@ class Trainer:
                 optimizer.zero_grad()
                 scheduler.step()
                 
-                token_seen += input_batch.numel()
 
                 if gpu_id == 0:
                     pbar.set_postfix({"train loss":f"{loss.item():.4f}"})
@@ -134,7 +134,7 @@ class Trainer:
                             f.write(f"{global_step}, {generated_text}\n")
                         val_losses.append(val_loss)
                         ppl = math.exp(val_loss)
-                        track_tokens_seen.append(token_seen)
+                        total_tokens += input_batch.numel()
                         sys.stdout.write("\r")
                         sys.stdout.write(" " * 50 + "\r")
                         sys.stdout.flush()
@@ -147,8 +147,9 @@ class Trainer:
             clear_gpu_memory()
 
         end_time = time.time()
+
         execution_time_minutes = (end_time - start_time) / 60
         if gpu_id == 0:
-            logger.info(f"Number of Train Tokens: {track_tokens_seen}")
+            logger.info(f"Number of Train Tokens: {total_tokens}")
             logger.info(f"Training completed in {execution_time_minutes:.2f} minutes.")
         return train_losses, val_losses, track_tokens_seen
