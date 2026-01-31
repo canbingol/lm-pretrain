@@ -16,6 +16,7 @@ from utils import (
     TrainConfig,
     DataLoaders,
     clear_gpu_memory,
+    write_norm_to_file
 )
 
 from .loss_func import(
@@ -44,9 +45,22 @@ class Trainer:
     
     def _train(self,train_state: TrainState, data_loaders: DataLoaders, training_config: TrainConfig, logger):
         start_time = time.time()
-        model, checkpoint_path, tokenizer  = astuple(train_state)
-        train_loader, val_loader = astuple(data_loaders)
-        num_epochs, training_steps, eval_steps, eval_sample, learning_rate, device, output_path, force = astuple(training_config)
+
+        model = train_state.model
+        checkpoint_path = train_state.checkpoint_path
+        tokenizer = train_state.tokenizer
+
+        train_loader = data_loaders.train
+        val_loader = data_loaders.val
+
+        num_epochs = training_config.num_epochs
+        training_steps = training_config.training_steps
+        eval_steps = training_config.eval_steps
+        eval_sample = training_config.eval_sample
+        learning_rate = training_config.learning_rate
+        device = training_config.device
+        output_path = training_config.output_path
+        force = training_config.force
 
         train_loss_file = f"{output_path}/train_loss.txt"
         val_loss_file = f"{output_path}/validation_loss.txt"
@@ -93,11 +107,16 @@ class Trainer:
                     continue
                     
                 loss.backward()
+
+                global_step += 1
+                write_norm_to_file(model=model, num_layers=model.module.config.num_hidden_layers,global_step=global_step, out_path=output_path)
+                
                 optimizer.step()
                 optimizer.zero_grad()
                 scheduler.step()
 
-                global_step += 1
+                breakpoint()
+                
                 token_seen += input_batch.numel()
 
                 if gpu_id == 0:
@@ -132,5 +151,6 @@ class Trainer:
         end_time = time.time()
         execution_time_minutes = (end_time - start_time) / 60
         if gpu_id == 0:
+            logger.info(f"Number of Train Tokens: {track_tokens_seen}")
             logger.info(f"Training completed in {execution_time_minutes:.2f} minutes.")
         return train_losses, val_losses, track_tokens_seen

@@ -87,6 +87,21 @@ def get_unique_filename(path):
         counter += 1
     return new_path
 
+def write_norm_to_file(model, num_layers, global_step, out_path):
+        attn_o_proj_norm= [model.module.base.layers[i].self_attn.o_proj.weight.grad.norm(2).item() for i in range(num_layers)]
+        mlp_down_proj_norm= [model.module.base.layers[i].mlp.down_proj.weight.grad.norm(2).item() for i in range(num_layers)]
+        embed_norm = [model.module.base.embed_tokens.weight.grad.norm(2).item()]
+
+        name_list = ["mlp_down_grad_norm", "attn_o_proj_grad_norm", "embedding_grad_norm"]
+        value_list = [mlp_down_proj_norm, attn_o_proj_norm, embed_norm]
+
+        for name,value in zip(name_list, value_list):
+            file_name = f"{out_path}/{name}.txt"
+
+            with open(file_name, "a", encoding="UTF-8") as f:
+                values = ",".join(f"{v:.6f}" for v in value)
+                f.write(f"{global_step}, {values}\n")
+
 
 def write_logs(logger, cfg, actual_dtype, config,n_trainable ,n_params, DEVICE, OUTPUT_PATH, checkpoint_path, gpu_id):
         
