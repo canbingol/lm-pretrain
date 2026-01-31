@@ -114,8 +114,6 @@ class Trainer:
                 optimizer.step()
                 optimizer.zero_grad()
                 scheduler.step()
-
-                breakpoint()
                 
                 token_seen += input_batch.numel()
 
