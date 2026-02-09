@@ -64,7 +64,7 @@ class Trainer:
 
         train_loss_file = f"{output_path}/train_loss.txt"
         val_loss_file = f"{output_path}/validation_loss.txt"
-        generated_text_file = f"{output_path}/validation_loss.txt"
+        generated_text_file = f"{output_path}/generated_text.txt"
 
 
         gpu_id = device
@@ -127,7 +127,7 @@ class Trainer:
                         print("Calculating loss...", end="", flush=True)
 
                         val_loss, generated_text = evaluate_model(
-                            model, tokenizer, val_loader, device, eval_sample, val_loss_file
+                            model, tokenizer, val_loader, device, eval_sample, global_step, val_loss_file
                         )
                         logger.info(f"Model generated text: {generated_text}")
                         with open(generated_text_file, "a") as f:

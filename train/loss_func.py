@@ -26,7 +26,7 @@ def calculate_loss(model, input_batch, target_batch, device):
     loss = cross_entropy_loss_batch(model,input_batch,target_batch,device)
     return loss
 
-def calc_loader_loss(model, data_loader, device, val_loss_file, num_batch=None, type_train=True):
+def calc_loader_loss(model, data_loader, device, global_step, val_loss_file, num_batch=None, type_train=True):
     total_loss = 0
     if len(data_loader) == 0:
         print("in calc_loader_loss len(data_loader)=0")
@@ -45,7 +45,7 @@ def calc_loader_loss(model, data_loader, device, val_loss_file, num_batch=None, 
                 sys.stdout.write(
                     f"\r[Eval {i+1:4d}/{num_batch}]  "
                     f"Progress: {progress*100:6.2f}%  "
-                    f"Step Loss: {loss}  "
+                    f"Step Loss: {global_step}, {loss}  "
                 )
                 sys.stdout.flush()
                 with open(val_loss_file,"a")as f:
@@ -57,11 +57,11 @@ def calc_loader_loss(model, data_loader, device, val_loss_file, num_batch=None, 
         clear_gpu_memory()
     return total_loss / num_batch
 
-def evaluate_model(model, tokenizer, val_loader, device, eval_iter, val_loss_file):
+def evaluate_model(model, tokenizer, val_loader, device, eval_iter, global_step, val_loss_file):
     model.eval()
     with torch.no_grad():
 
-        val_loss = calc_loader_loss(model, val_loader, device, val_loss_file, num_batch=eval_iter, type_train=False)
+        val_loss = calc_loader_loss(model, val_loader, device, global_step, val_loss_file, num_batch=eval_iter, type_train=False)
         
         prompt = tokenizer.encode("Selam kimsin?", return_tensors="pt")
         prompt = prompt.to(device)
