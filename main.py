@@ -179,7 +179,7 @@ def main():
 
     # Start training
     try:
-        trainer = Trainer(train_state,data_loaders,train_config, logger)
+        trainer = Trainer(train_state,data_loaders,train_config, logger, cfg.hub)
         trainer.train()
 
         if cfg.hub.push_to_hub:

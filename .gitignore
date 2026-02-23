@@ -22,3 +22,6 @@ Thumbs.db
 
 # Non-complate scripts
 train/rlhf_trainer.py
+
+# Vscode
+.vscode

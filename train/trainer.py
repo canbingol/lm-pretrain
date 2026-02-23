@@ -26,13 +26,13 @@ from .loss_func import(
 
 class Trainer:
 
-    def __init__(self, train_state: TrainState,data_loaders: DataLoaders, training_config: TrainConfig, logger):
+    def __init__(self, train_state: TrainState,data_loaders: DataLoaders, training_config: TrainConfig, logger, hub_info):
         
         self.train_state = train_state
         self.data_loaders = data_loaders
         self.training_config = training_config
         self.logger  =logger
-
+        self.hub_info = hub_info
 
     def train(self):
         train_losses, val_losses, tokens_seen = self._train(
@@ -40,10 +40,11 @@ class Trainer:
             data_loaders=self.data_loaders,
             training_config=self.training_config, 
             logger=self.logger,
+            hub_info = self.hub_info
         )
         return train_losses,val_losses,tokens_seen
     
-    def _train(self,train_state: TrainState, data_loaders: DataLoaders, training_config: TrainConfig, logger):
+    def _train(self,train_state: TrainState, data_loaders: DataLoaders, training_config: TrainConfig, logger, hub_info):
         start_time = time.time()
 
         model = train_state.model
@@ -140,7 +141,11 @@ class Trainer:
                         sys.stdout.flush()
                         logger.info(f"Ep {epoch+1} (Step {global_step:06d}): "
                             f"Train loss {loss:.3f} Val loss {val_loss:.3f}, Perplexity {ppl:.3f}")
-
+                        
+                        model.push_to_hub(hub_info.repo_name,
+                                          commit_message=f"Ep {epoch+1} (Step {global_step:06d}): "
+                            f"Train loss {loss:.3f} Val loss {val_loss:.3f}, Perplexity {ppl:.3f}")
+                        
                         if val_loss < best_val_loss:
                             best_val_loss = val_loss
                             model.module.save_pretrained(f"{output_path}/{model.module.name}_best_model")
